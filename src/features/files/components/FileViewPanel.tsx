@@ -22,15 +22,6 @@ import {
   ViewPlugin,
   type ViewUpdate,
 } from "@codemirror/view";
-import { javascript } from "@codemirror/lang-javascript";
-import { json } from "@codemirror/lang-json";
-import { html } from "@codemirror/lang-html";
-import { css } from "@codemirror/lang-css";
-import { markdown as cmMarkdown } from "@codemirror/lang-markdown";
-import { python } from "@codemirror/lang-python";
-import { rust } from "@codemirror/lang-rust";
-import { xml } from "@codemirror/lang-xml";
-import { yaml } from "@codemirror/lang-yaml";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { RangeSetBuilder, type Extension } from "@codemirror/state";
 import {
@@ -44,6 +35,7 @@ import { OpenAppMenu } from "../../app/components/OpenAppMenu";
 import FileIcon from "../../../components/FileIcon";
 import { pushErrorToast } from "../../../services/toasts";
 import type { GitFileStatus, OpenAppTarget } from "../../../types";
+import { codeMirrorExtensionsForPath } from "../utils/codemirrorLanguageExtensions";
 
 type FileViewPanelProps = {
   workspaceId: string;
@@ -122,44 +114,6 @@ function resolveAbsolutePath(workspacePath: string, relativePath: string) {
     ? workspacePath.slice(0, -1)
     : workspacePath;
   return `${base}/${relativePath}`;
-}
-
-function cmLangExtension(filePath: string): Extension[] {
-  const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
-  switch (ext) {
-    case "js":
-    case "mjs":
-      return [javascript()];
-    case "jsx":
-      return [javascript({ jsx: true })];
-    case "ts":
-      return [javascript({ typescript: true })];
-    case "tsx":
-      return [javascript({ jsx: true, typescript: true })];
-    case "json":
-      return [json()];
-    case "html":
-      return [html()];
-    case "css":
-    case "scss":
-    case "sass":
-      return [css()];
-    case "md":
-    case "mdx":
-      return [cmMarkdown()];
-    case "py":
-      return [python()];
-    case "rs":
-      return [rust()];
-    case "xml":
-    case "svg":
-      return [xml()];
-    case "yaml":
-    case "yml":
-      return [yaml()];
-    default:
-      return [];
-  }
 }
 
 type GitLineMarkers = {
@@ -525,7 +479,7 @@ export function FileViewPanel({
 
   // CodeMirror extensions (Mod-s handled inside CM; window-level handles preview mode)
   const cmExtensions = useMemo(() => {
-    const langExt = cmLangExtension(filePath);
+    const langExt = codeMirrorExtensionsForPath(filePath);
     if (gitLineMarkers.added.length === 0 && gitLineMarkers.modified.length === 0) {
       return [...langExt];
     }
