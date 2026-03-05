@@ -662,7 +662,7 @@ describe("useThreadActions", () => {
     });
   });
 
-  it("filters archived, vscode, and Codex helper thread entries", async () => {
+  it("filters archived and Codex helper thread entries while keeping vscode sessions", async () => {
     vi.mocked(listThreads).mockResolvedValue({
       result: {
         data: [
@@ -684,7 +684,7 @@ describe("useThreadActions", () => {
           {
             id: "thread-vscode",
             cwd: "/tmp/codex",
-            preview: "Should hide vscode",
+            preview: "Should keep vscode",
             updated_at: 6000,
             source: "vscode",
           },
@@ -727,6 +727,12 @@ describe("useThreadActions", () => {
           id: "thread-valid",
           name: "Visible thread",
           updatedAt: 6200,
+          engineSource: "codex",
+        },
+        {
+          id: "thread-vscode",
+          name: "Should keep vscode",
+          updatedAt: 6000,
           engineSource: "codex",
         },
       ],

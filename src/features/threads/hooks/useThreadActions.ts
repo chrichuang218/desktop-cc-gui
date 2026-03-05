@@ -74,7 +74,6 @@ const THREAD_LIST_MAX_EMPTY_PAGES = 5;
 const THREAD_LIST_MAX_EMPTY_PAGES_WITH_ACTIVITY = 20;
 const THREAD_LIST_MAX_TOTAL_PAGES = 40;
 const THREAD_LIST_MAX_EMPTY_PAGES_LOAD_OLDER = 10;
-const EXCLUDED_THREAD_SOURCES = new Set(["vscode"]);
 const CODEX_BACKGROUND_HELPER_PROMPT_PREFIXES = [
   "Generate a concise title for a coding chat thread from the first user message.",
   "You create concise run metadata for a coding task.",
@@ -156,10 +155,6 @@ function shouldIncludeThreadEntry(thread: Record<string, unknown>): boolean {
     ),
   );
   if (isCodexHelperThread) {
-    return false;
-  }
-  const source = asString(thread.source).trim().toLowerCase();
-  if (source && EXCLUDED_THREAD_SOURCES.has(source)) {
     return false;
   }
   return true;
