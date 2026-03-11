@@ -357,4 +357,37 @@ describe("useThreadItemEvents", () => {
       hasCustomName: false,
     });
   });
+
+  it("skips claude reasoning snapshot upsert to avoid duplicate reasoning blocks", () => {
+    vi.mocked(buildConversationItem).mockReturnValue({
+      id: "reasoning-1",
+      kind: "reasoning",
+      summary: "思考",
+      content: "思考内容",
+    });
+    const { result, dispatch, safeMessageActivity } = makeOptions();
+
+    act(() => {
+      result.current.onItemUpdated("ws-1", "claude:session-1", {
+        type: "reasoning",
+        id: "reasoning-1",
+        text: "思考内容",
+      });
+    });
+
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "ensureThread",
+      workspaceId: "ws-1",
+      threadId: "claude:session-1",
+      engine: "claude",
+    });
+    expect(dispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "upsertItem",
+        workspaceId: "ws-1",
+        threadId: "claude:session-1",
+      }),
+    );
+    expect(safeMessageActivity).toHaveBeenCalled();
+  });
 });

@@ -886,6 +886,91 @@ describe("threadReducer", () => {
     }
   });
 
+  it("ignores claude reasoning deltas when the thread has no active turn", () => {
+    const next = threadReducer(initialState, {
+      type: "appendReasoningContent",
+      threadId: "claude:session-a",
+      itemId: "reasoning-ignored-1",
+      delta: "stale delta",
+    });
+    expect(next.itemsByThread["claude:session-a"]).toBeUndefined();
+  });
+
+  it("accepts claude reasoning deltas while processing", () => {
+    const processingState: ThreadState = {
+      ...initialState,
+      threadStatusById: {
+        "claude:session-b": {
+          isProcessing: true,
+          hasUnread: false,
+          isReviewing: false,
+          isContextCompacting: false,
+          processingStartedAt: Date.now(),
+          lastDurationMs: null,
+          heartbeatPulse: 0,
+        },
+      },
+    };
+    const next = threadReducer(processingState, {
+      type: "appendReasoningContent",
+      threadId: "claude:session-b",
+      itemId: "reasoning-live-1",
+      delta: "live delta",
+    });
+    const item = next.itemsByThread["claude:session-b"]?.[0];
+    expect(item?.kind).toBe("reasoning");
+  });
+
+  it("drops reasoning items explicitly for transient claude rendering", () => {
+    const withReasoning = threadReducer(initialState, {
+      type: "appendReasoningContent",
+      threadId: "thread-1",
+      itemId: "reasoning-drop-1",
+      delta: "to be dropped",
+    });
+    const dropped = threadReducer(withReasoning, {
+      type: "dropReasoningItems",
+      threadId: "thread-1",
+    });
+    expect(dropped.itemsByThread["thread-1"] ?? []).toHaveLength(0);
+  });
+
+  it("folds duplicate reasoning snapshots with different ids into one item", () => {
+    const base: ThreadState = {
+      ...initialState,
+      itemsByThread: {
+        "thread-1": [
+          {
+            id: "reasoning-a",
+            kind: "reasoning",
+            summary: "项目分析中...",
+            content:
+              "用户要求项目简单分析。我先梳理当前工作目录与项目结构，然后读取关键文件。",
+          },
+        ],
+      },
+    };
+
+    const next = threadReducer(base, {
+      type: "upsertItem",
+      workspaceId: "ws-1",
+      threadId: "thread-1",
+      item: {
+        id: "reasoning-b",
+        kind: "reasoning",
+        summary: "项目分析中...",
+        content:
+          "用户要求项目简单分析。我先梳理当前工作目录与项目结构，然后读取关键文件。",
+      },
+      hasCustomName: false,
+    });
+
+    const items = next.itemsByThread["thread-1"] ?? [];
+    const reasoningItems = items.filter((item) => item.kind === "reasoning");
+    expect(reasoningItems).toHaveLength(1);
+    expect(reasoningItems[0]?.id).toBe("reasoning-a");
+  });
+
   it("inserts a reasoning summary boundary between sections", () => {
     const withSummary = threadReducer(initialState, {
       type: "appendReasoningSummary",
@@ -1330,6 +1415,73 @@ describe("threadReducer", () => {
     expect(next.activeThreadIdByWorkspace["ws-1"]).toBe("claude-pending-a");
   });
 
+  it("does not auto-rename when multiple pending Claude threads exist even if active has activity", () => {
+    const base: ThreadState = {
+      ...initialState,
+      activeThreadIdByWorkspace: { "ws-1": "claude-pending-new" },
+      threadsByWorkspace: {
+        "ws-1": [
+          {
+            id: "claude-pending-old",
+            name: "Agent 1",
+            updatedAt: 1,
+            engineSource: "claude",
+          },
+          {
+            id: "claude-pending-new",
+            name: "Agent 2",
+            updatedAt: 2,
+            engineSource: "claude",
+          },
+        ],
+      },
+      threadStatusById: {
+        "claude-pending-old": {
+          isProcessing: true,
+          hasUnread: false,
+          isReviewing: false,
+          processingStartedAt: 100,
+          lastDurationMs: null,
+        },
+        "claude-pending-new": {
+          isProcessing: false,
+          hasUnread: false,
+          isReviewing: false,
+          processingStartedAt: null,
+          lastDurationMs: null,
+        },
+      },
+      itemsByThread: {
+        "claude-pending-old": [
+          { id: "reasoning-old", kind: "reasoning", summary: "old", content: "old stream" },
+        ],
+        "claude-pending-new": [
+          { id: "user-new", kind: "message", role: "user", text: "new prompt" },
+        ],
+      },
+    };
+
+    const next = threadReducer(base, {
+      type: "ensureThread",
+      workspaceId: "ws-1",
+      threadId: "claude:session-2",
+      engine: "claude",
+    });
+
+    const ids = next.threadsByWorkspace["ws-1"]?.map((thread) => thread.id) ?? [];
+    expect(ids).toContain("claude-pending-old");
+    expect(ids).toContain("claude-pending-new");
+    expect(ids).toContain("claude:session-2");
+    expect(next.itemsByThread["claude:session-2"] ?? []).toHaveLength(0);
+    expect(next.itemsByThread["claude-pending-new"]?.map((item) => item.id)).toContain(
+      "user-new",
+    );
+    expect(next.itemsByThread["claude-pending-old"]?.map((item) => item.id)).toContain(
+      "reasoning-old",
+    );
+    expect(next.activeThreadIdByWorkspace["ws-1"]).toBe("claude-pending-new");
+  });
+
   it("does not force-rename a single idle pending thread to unrelated session id", () => {
     const base: ThreadState = {
       ...initialState,
@@ -1639,6 +1791,53 @@ describe("threadReducer", () => {
       turnId: "turn-3",
       explanation: "other",
       steps: [{ step: "other-step", status: "inProgress" }],
+    });
+  });
+
+  it("settles in-progress plan steps without changing other statuses", () => {
+    const base: ThreadState = {
+      ...initialState,
+      planByThread: {
+        "thread-1": {
+          turnId: "turn-9",
+          explanation: "plan",
+          steps: [
+            { step: "step-a", status: "completed" },
+            { step: "step-b", status: "inProgress" },
+            { step: "step-c", status: "pending" },
+          ],
+        },
+      },
+    };
+
+    const settledPending = threadReducer(base, {
+      type: "settleThreadPlanInProgress",
+      threadId: "thread-1",
+      targetStatus: "pending",
+    });
+    expect(settledPending.planByThread["thread-1"]).toEqual({
+      turnId: "turn-9",
+      explanation: "plan",
+      steps: [
+        { step: "step-a", status: "completed" },
+        { step: "step-b", status: "pending" },
+        { step: "step-c", status: "pending" },
+      ],
+    });
+
+    const settledCompleted = threadReducer(base, {
+      type: "settleThreadPlanInProgress",
+      threadId: "thread-1",
+      targetStatus: "completed",
+    });
+    expect(settledCompleted.planByThread["thread-1"]).toEqual({
+      turnId: "turn-9",
+      explanation: "plan",
+      steps: [
+        { step: "step-a", status: "completed" },
+        { step: "step-b", status: "completed" },
+        { step: "step-c", status: "pending" },
+      ],
     });
   });
 });

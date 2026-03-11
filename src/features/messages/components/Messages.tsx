@@ -24,7 +24,11 @@ import { CollapsibleUserTextBlock } from "./CollapsibleUserTextBlock";
 import { DiffBlock } from "../../git/components/DiffBlock";
 import { languageFromPath } from "../../../utils/syntax";
 import { useFileLinkOpener } from "../hooks/useFileLinkOpener";
-import { groupToolItems, type GroupedEntry } from "../utils/groupToolItems";
+import {
+  groupToolItems,
+  shouldHideToolItemForRender,
+  type GroupedEntry,
+} from "../utils/groupToolItems";
 import { extractCommandMessageDisplayText } from "../utils/commandMessageTags";
 import {
   ToolBlockRenderer,
@@ -208,6 +212,7 @@ const MODE_FALLBACK_MARKER_REGEX = /User request\s*:\s*/i;
 const MODE_FALLBACK_PREFIX_REGEX =
   /^(?:collaboration mode:\s*code\.|execution policy \(default mode\):|execution policy \(plan mode\):)/i;
 const MESSAGES_PERF_DEBUG_FLAG_KEY = "mossx.debug.messages.perf";
+const CLAUDE_HIDE_REASONING_MODULE_FLAG_KEY = "mossx.claude.hideReasoningModule";
 const MESSAGES_SLOW_RENDER_WARN_MS = 18;
 const MESSAGES_SLOW_ANCHOR_WARN_MS = 8;
 const VISIBLE_MESSAGE_WINDOW = 30;
@@ -220,6 +225,22 @@ function isMessagesPerfDebugEnabled(): boolean {
     return false;
   }
   return window.localStorage.getItem(MESSAGES_PERF_DEBUG_FLAG_KEY) === "1";
+}
+
+function shouldHideClaudeReasoningModule(): boolean {
+  if (typeof window === "undefined") {
+    return true;
+  }
+  try {
+    const value = window.localStorage.getItem(CLAUDE_HIDE_REASONING_MODULE_FLAG_KEY);
+    if (!value) {
+      return true;
+    }
+    const normalized = value.trim().toLowerCase();
+    return !(normalized === "0" || normalized === "false" || normalized === "off");
+  } catch {
+    return true;
+  }
 }
 
 function logMessagesPerf(label: string, payload: Record<string, unknown>): void {
@@ -333,6 +354,30 @@ function stripLeadingReasoningTitleOverlap(
   }
 
   return trimmedContent;
+}
+
+function splitComparableReasoningClauses(value: string) {
+  return value
+    .split(/[。！？!?；;\n]+/)
+    .map((entry) => compactComparableReasoningText(entry.trim()))
+    .filter((entry) => entry.length >= 6);
+}
+
+function hasSharedReasoningClauseSuffix(left: string, right: string) {
+  const leftClauses = splitComparableReasoningClauses(left);
+  const rightClauses = splitComparableReasoningClauses(right);
+  if (leftClauses.length < 3 || rightClauses.length < 3) {
+    return false;
+  }
+  const max = Math.min(leftClauses.length, rightClauses.length);
+  let shared = 0;
+  for (let offset = 1; offset <= max; offset += 1) {
+    if (leftClauses[leftClauses.length - offset] !== rightClauses[rightClauses.length - offset]) {
+      break;
+    }
+    shared += 1;
+  }
+  return shared >= 2;
 }
 
 function dedupeAdjacentReasoningParagraphs(value: string) {
@@ -486,6 +531,8 @@ function parseReasoning(item: Extract<ConversationItem, { kind: "reasoning" }>) 
       bodyParts = [normalizedContentBody];
     } else if (compactSummaryBody.startsWith(compactContentBody)) {
       bodyParts = [normalizedSummaryBody];
+    } else if (hasSharedReasoningClauseSuffix(normalizedSummaryBody, normalizedContentBody)) {
+      bodyParts = [chooseBetterReasoningText(normalizedSummaryBody, normalizedContentBody)];
     } else {
       bodyParts = [normalizedSummaryBody, normalizedContentBody];
     }
@@ -508,22 +555,6 @@ function isReasoningDuplicate(
   previous: ReturnType<typeof parseReasoning>,
   next: ReturnType<typeof parseReasoning>,
 ) {
-  const previousTitle = compactComparableReasoningText(
-    previous.summaryTitle || previous.workingLabel || "",
-  );
-  const nextTitle = compactComparableReasoningText(
-    next.summaryTitle || next.workingLabel || "",
-  );
-  if (
-    previousTitle &&
-    nextTitle &&
-    previousTitle.length >= 6 &&
-    nextTitle.length >= 6 &&
-    previousTitle !== nextTitle
-  ) {
-    return false;
-  }
-
   const previousBody = compactComparableReasoningText(previous.bodyText || "");
   const nextBody = compactComparableReasoningText(next.bodyText || "");
   if (previousBody && nextBody) {
@@ -539,10 +570,33 @@ function isReasoningDuplicate(
     return false;
   }
 
+  const previousTitle = compactComparableReasoningText(
+    previous.summaryTitle || previous.workingLabel || "",
+  );
+  const nextTitle = compactComparableReasoningText(
+    next.summaryTitle || next.workingLabel || "",
+  );
+
   if (!previousBody && !nextBody) {
-    const previousLabel = compactComparableReasoningText(previous.workingLabel || "");
-    const nextLabel = compactComparableReasoningText(next.workingLabel || "");
-    return previousLabel.length >= 8 && previousLabel === nextLabel;
+    if (
+      previousTitle &&
+      nextTitle &&
+      previousTitle.length >= 8 &&
+      nextTitle.length >= 8
+    ) {
+      return previousTitle === nextTitle;
+    }
+    return false;
+  }
+
+  if (
+    previousTitle &&
+    nextTitle &&
+    previousTitle.length >= 6 &&
+    nextTitle.length >= 6 &&
+    previousTitle !== nextTitle
+  ) {
+    return false;
   }
 
   return false;
@@ -573,6 +627,53 @@ function dedupeAdjacentReasoningItems(
     };
   }
   return deduped;
+}
+
+function collapseConsecutiveReasoningRuns(
+  list: ConversationItem[],
+  enabled: boolean,
+) {
+  if (!enabled || list.length <= 1) {
+    return list;
+  }
+  const collapsed: ConversationItem[] = [];
+  let index = 0;
+  while (index < list.length) {
+    const item = list[index];
+    if (item.kind !== "reasoning") {
+      collapsed.push(item);
+      index += 1;
+      continue;
+    }
+
+    let end = index + 1;
+    while (end < list.length && list[end].kind === "reasoning") {
+      end += 1;
+    }
+
+    if (end - index === 1) {
+      collapsed.push(item);
+      index = end;
+      continue;
+    }
+
+    const run = list.slice(index, end) as Array<Extract<ConversationItem, { kind: "reasoning" }>>;
+    const latest = run[run.length - 1];
+    let mergedSummary = run[0].summary;
+    let mergedContent = run[0].content;
+    for (let runIndex = 1; runIndex < run.length; runIndex += 1) {
+      const candidate = run[runIndex];
+      mergedSummary = chooseBetterReasoningText(mergedSummary, candidate.summary);
+      mergedContent = chooseBetterReasoningText(mergedContent, candidate.content);
+    }
+    collapsed.push({
+      ...latest,
+      summary: mergedSummary,
+      content: mergedContent,
+    });
+    index = end;
+  }
+  return collapsed;
 }
 
 function normalizeMessageImageSrc(path: string) {
@@ -869,6 +970,53 @@ function resolveWorkingActivityLabel(
   return null;
 }
 
+function findLastUserMessageIndex(items: ConversationItem[]) {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (item.kind === "message" && item.role === "user") {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function findLastAssistantMessageIndex(items: ConversationItem[]) {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (item.kind === "message" && item.role === "assistant") {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function shouldDisplayWorkingActivityLabel(
+  reasoningLabel: string | null,
+  activityLabel: string | null,
+) {
+  if (!activityLabel) {
+    return false;
+  }
+  if (!reasoningLabel) {
+    return true;
+  }
+  const compactReasoning = compactComparableReasoningText(reasoningLabel);
+  const compactActivity = compactComparableReasoningText(activityLabel);
+  if (!compactReasoning || !compactActivity) {
+    return true;
+  }
+  if (compactReasoning === compactActivity) {
+    return false;
+  }
+  if (compactReasoning.length >= 12 && compactActivity.includes(compactReasoning)) {
+    return false;
+  }
+  if (compactActivity.length >= 12 && compactReasoning.includes(compactActivity)) {
+    return false;
+  }
+  return true;
+}
+
 const WorkingIndicator = memo(function WorkingIndicator({
   isThinking,
   processingStartedAt = null,
@@ -901,6 +1049,10 @@ const WorkingIndicator = memo(function WorkingIndicator({
     isThinking &&
     waitingForFirstChunk &&
     elapsedMs >= OPENCODE_NON_STREAMING_HINT_DELAY_MS;
+  const showActivityLabel = shouldDisplayWorkingActivityLabel(
+    reasoningLabel,
+    activityLabel,
+  );
   const nonStreamingHintText = t("messages.nonStreamingHint");
   const resolvedNonStreamingHint =
     nonStreamingHintText === "messages.nonStreamingHint"
@@ -963,7 +1115,7 @@ const WorkingIndicator = memo(function WorkingIndicator({
             <span className="working-timer-clock">{formatDurationMs(elapsedMs)}</span>
           </div>
           <span className="working-text">{reasoningLabel || t("messages.generatingResponse")}</span>
-          {activityLabel && <span className="working-activity">{activityLabel}</span>}
+          {showActivityLabel && <span className="working-activity">{activityLabel}</span>}
           {showNonStreamingHint && (
             <span className="working-hint">
               {heartbeatHintText || resolvedNonStreamingHint}
@@ -1369,6 +1521,7 @@ export const Messages = memo(function Messages({
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [activeAnchorId, setActiveAnchorId] = useState<string | null>(null);
   const [showAllHistoryItems, setShowAllHistoryItems] = useState(false);
+  const hideClaudeReasoning = activeEngine === "claude" && shouldHideClaudeReasoningModule();
   const [isPlanPreviewOpen, setIsPlanPreviewOpen] = useState(false);
   const [isSelectionFrozen, setIsSelectionFrozen] = useState(false);
   const copyTimeoutRef = useRef<number | null>(null);
@@ -1547,7 +1700,6 @@ export const Messages = memo(function Messages({
       lastAutoExpandedIdRef.current = lastReasoningId;
     }
   }, [effectiveItems, isThinking]);
-
   const reasoningMetaById = useMemo(() => {
     const meta = new Map<string, ReturnType<typeof parseReasoning>>();
     effectiveItems.forEach((item) => {
@@ -1558,12 +1710,23 @@ export const Messages = memo(function Messages({
     return meta;
   }, [effectiveItems]);
 
+  const lastUserMessageIndex = useMemo(
+    () => findLastUserMessageIndex(effectiveItems),
+    [effectiveItems],
+  );
+  const reasoningWindowStartIndex = useMemo(() => {
+    if (lastUserMessageIndex >= 0) {
+      return lastUserMessageIndex;
+    }
+    return findLastAssistantMessageIndex(effectiveItems);
+  }, [effectiveItems, lastUserMessageIndex]);
+
   const latestReasoningLabel = useMemo(() => {
-    for (let index = effectiveItems.length - 1; index >= 0; index -= 1) {
+    if (hideClaudeReasoning) {
+      return null;
+    }
+    for (let index = effectiveItems.length - 1; index > reasoningWindowStartIndex; index -= 1) {
       const item = effectiveItems[index];
-      if (item.kind === "message") {
-        break;
-      }
       if (item.kind !== "reasoning") {
         continue;
       }
@@ -1573,20 +1736,65 @@ export const Messages = memo(function Messages({
       }
     }
     return null;
-  }, [effectiveItems, reasoningMetaById]);
+  }, [effectiveItems, hideClaudeReasoning, reasoningMetaById, reasoningWindowStartIndex]);
 
   const latestReasoningId = useMemo(() => {
-    for (let index = effectiveItems.length - 1; index >= 0; index -= 1) {
+    for (let index = effectiveItems.length - 1; index > reasoningWindowStartIndex; index -= 1) {
       const item = effectiveItems[index];
-      if (item.kind === "message") {
-        break;
-      }
       if (item.kind === "reasoning") {
         return item.id;
       }
     }
     return null;
-  }, [effectiveItems]);
+  }, [effectiveItems, reasoningWindowStartIndex]);
+  const claudeDockedReasoningItems = useMemo(() => {
+    if (!hideClaudeReasoning) {
+      return [] as Array<{
+        item: Extract<ConversationItem, { kind: "reasoning" }>;
+        parsed: ReturnType<typeof parseReasoning>;
+      }>;
+    }
+    const list: Array<{
+      item: Extract<ConversationItem, { kind: "reasoning" }>;
+      parsed: ReturnType<typeof parseReasoning>;
+    }> = [];
+    for (let index = reasoningWindowStartIndex + 1; index < effectiveItems.length; index += 1) {
+      const item = effectiveItems[index];
+      if (item.kind !== "reasoning") {
+        continue;
+      }
+      const parsed = reasoningMetaById.get(item.id) ?? parseReasoning(item);
+      const hasText =
+        Boolean(parsed.bodyText?.trim()) ||
+        Boolean(item.content?.trim()) ||
+        Boolean(item.summary?.trim());
+      if (!hasText) {
+        continue;
+      }
+      list.push({ item, parsed });
+    }
+    return list;
+  }, [effectiveItems, hideClaudeReasoning, reasoningMetaById, reasoningWindowStartIndex]);
+  const previousIsThinkingRef = useRef(isThinking);
+  useEffect(() => {
+    if (previousIsThinkingRef.current && !isThinking && claudeDockedReasoningItems.length > 0) {
+      setExpandedItems((prev) => {
+        const reasoningIds = new Set(claudeDockedReasoningItems.map((entry) => entry.item.id));
+        let changed = false;
+        const next = new Set(prev);
+        for (const id of reasoningIds) {
+          if (next.delete(id)) {
+            changed = true;
+          }
+        }
+        if (!changed) {
+          return prev;
+        }
+        return next;
+      });
+    }
+    previousIsThinkingRef.current = isThinking;
+  }, [claudeDockedReasoningItems, isThinking]);
 
   const latestTitleOnlyReasoningId = useMemo(() => {
     for (let index = effectiveItems.length - 1; index >= 0; index -= 1) {
@@ -1653,6 +1861,12 @@ export const Messages = memo(function Messages({
 
   const visibleItems = useMemo(() => {
     const filtered = effectiveItems.filter((item) => {
+        if (hideClaudeReasoning && item.kind === "reasoning") {
+          return false;
+        }
+        if (item.kind === "tool" && shouldHideToolItemForRender(item)) {
+          return false;
+        }
         if (item.kind !== "reasoning") {
           return true;
         }
@@ -1672,8 +1886,10 @@ export const Messages = memo(function Messages({
           : activeEngine === "codex";
         return keepTitleOnlyReasoning || item.id === latestTitleOnlyReasoningId;
       });
-    return dedupeAdjacentReasoningItems(filtered, reasoningMetaById);
-  }, [activeEngine, effectiveItems, latestTitleOnlyReasoningId, presentationProfile, reasoningMetaById]);
+    const deduped = dedupeAdjacentReasoningItems(filtered, reasoningMetaById);
+    const collapseReasoningRuns = activeEngine !== "codex" && activeEngine !== "gemini";
+    return collapseConsecutiveReasoningRuns(deduped, collapseReasoningRuns);
+  }, [activeEngine, effectiveItems, hideClaudeReasoning, latestTitleOnlyReasoningId, presentationProfile, reasoningMetaById]);
   const shouldCollapseHistoryItems =
     !showAllHistoryItems && visibleItems.length > VISIBLE_MESSAGE_WINDOW;
   const collapsedHistoryItemCount = shouldCollapseHistoryItems
@@ -2111,6 +2327,18 @@ export const Messages = memo(function Messages({
           )}
           {groupedEntries.map(renderEntry)}
           {planQuickViewNode}
+          {claudeDockedReasoningItems.map(({ item, parsed }) => (
+            <ReasoningRow
+              key={`claude-live-${item.id}`}
+              item={item}
+              parsed={parsed}
+              isExpanded={isThinking && latestReasoningId === item.id ? true : expandedItems.has(item.id)}
+              isLive={isThinking && latestReasoningId === item.id}
+              onToggle={toggleExpanded}
+              onOpenFileLink={openFileLink}
+              onOpenFileLinkMenu={showFileLinkMenu}
+            />
+          ))}
           {userInputNode}
           <WorkingIndicator
             isThinking={isThinking}

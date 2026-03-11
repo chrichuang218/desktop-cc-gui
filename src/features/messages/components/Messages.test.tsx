@@ -1,12 +1,16 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConversationItem, RequestUserInputRequest } from "../../../types";
 import { Messages } from "./Messages";
 
 describe("Messages", () => {
   afterEach(() => {
     cleanup();
+  });
+
+  beforeEach(() => {
+    window.localStorage.setItem("mossx.claude.hideReasoningModule", "0");
   });
 
   beforeAll(() => {
@@ -578,6 +582,49 @@ describe("Messages", () => {
     expect(screen.getByText("keep-a.ts")).toBeTruthy();
     expect(screen.getByText("keep-b.ts")).toBeTruthy();
     expect(screen.queryByText("待办列表")).toBeNull();
+  });
+
+  it("collapses duplicate reasoning snapshots separated only by hidden TodoWrite tools", () => {
+    const repeated =
+      "用户要求进行项目分析，这是一个比较宽泛的请求。我需要先读取项目规范并查看项目结构。";
+    const items: ConversationItem[] = [
+      {
+        id: "reasoning-hidden-sep-1",
+        kind: "reasoning",
+        summary: repeated,
+        content: repeated,
+      },
+      {
+        id: "tool-hidden-todo-1",
+        kind: "tool",
+        toolType: "toolCall",
+        title: "Tool: TodoWrite",
+        detail: JSON.stringify({ todos: [{ content: "step 1" }] }),
+        status: "completed",
+        output: "todo updated",
+      },
+      {
+        id: "reasoning-hidden-sep-2",
+        kind: "reasoning",
+        summary: `${repeated} 现在我继续读取 README.md。`,
+        content: `${repeated} 现在我继续读取 README.md。`,
+      },
+    ];
+
+    const { container } = render(
+      <Messages
+        items={items}
+        threadId="thread-1"
+        workspaceId="ws-1"
+        isThinking
+        activeEngine="claude"
+        openTargets={[]}
+        selectedOpenAppId=""
+      />,
+    );
+
+    expect(container.querySelectorAll(".thinking-block").length).toBe(1);
+    expect(container.textContent ?? "").toContain("现在我继续读取 README.md");
   });
 
   it("matches extended lead keywords with semantic icons", () => {
@@ -1373,6 +1420,38 @@ describe("Messages", () => {
     expect(matches.length).toBe(1);
   });
 
+  it("dedupes reasoning summary and content when they share suffix clauses", () => {
+    const items: ConversationItem[] = [
+      {
+        id: "reasoning-overlap-suffix-1",
+        kind: "reasoning",
+        summary:
+          "让我继续读取项目内规范文件和项目结构。现在我有了项目的概览信息。现在我对项目有了比较全面的了解。让我整理分析报告。",
+        content:
+          "MossX 是一个基于 Tauri + React 的桌面应用，是 Cursor 的开源替代品，集成了多个 AI 编程引擎。现在我对项目有了比较全面的了解。让我整理分析报告。",
+      },
+    ];
+
+    const { container } = render(
+      <Messages
+        items={items}
+        threadId="thread-1"
+        workspaceId="ws-1"
+        isThinking
+        processingStartedAt={Date.now() - 2_000}
+        activeEngine="claude"
+        openTargets={[]}
+        selectedOpenAppId=""
+      />,
+    );
+
+    const reasoningDetail = container.querySelector(".thinking-content");
+    expect(reasoningDetail).toBeTruthy();
+    const text = (reasoningDetail?.textContent ?? "").replace(/\s+/g, "");
+    const matches = text.match(/让我整理分析报告/g) ?? [];
+    expect(matches.length).toBe(1);
+  });
+
   it("strips duplicated reasoning title prefix from content body", () => {
     const title =
       "用户只是说“你好”，这是一个简单的问候。根据我的指导原则：1. 这是一个简单的交互，不需要使用工具。";
@@ -1443,6 +1522,191 @@ describe("Messages", () => {
     );
 
     expect(container.querySelectorAll(".thinking-block").length).toBe(1);
+  });
+
+  it("dedupes incremental claude reasoning snapshots even when titles evolve", () => {
+    const step1 =
+      "用户发送了“项目分析”这个简短请求。我需要先了解当前项目的上下文。";
+    const step2 = `${step1}这是一个 worktree 目录。让我读取 package.json 和项目结构。`;
+    const step3 = `${step2}现在我对项目有了完整的了解。`;
+    const items: ConversationItem[] = [
+      {
+        id: "reasoning-snapshot-1",
+        kind: "reasoning",
+        summary: step1,
+        content: step1,
+      },
+      {
+        id: "reasoning-snapshot-2",
+        kind: "reasoning",
+        summary: step2,
+        content: step2,
+      },
+      {
+        id: "reasoning-snapshot-3",
+        kind: "reasoning",
+        summary: step3,
+        content: step3,
+      },
+    ];
+
+    const { container } = render(
+      <Messages
+        items={items}
+        threadId="thread-1"
+        workspaceId="ws-1"
+        isThinking
+        processingStartedAt={Date.now() - 2_000}
+        activeEngine="claude"
+        openTargets={[]}
+        selectedOpenAppId=""
+      />,
+    );
+
+    expect(container.querySelectorAll(".thinking-block").length).toBe(1);
+    expect(container.textContent ?? "").toContain("现在我对项目有了完整的了解");
+  });
+
+  it("collapses consecutive claude reasoning runs into a single visible block", () => {
+    const items: ConversationItem[] = [
+      {
+        id: "reasoning-run-1",
+        kind: "reasoning",
+        summary: "先读取 README 并识别技术栈",
+        content: "先读取 README 并识别技术栈",
+      },
+      {
+        id: "reasoning-run-2",
+        kind: "reasoning",
+        summary: "继续读取 CLAUDE.md 并整理结论",
+        content: "继续读取 CLAUDE.md 并整理结论",
+      },
+      {
+        id: "reasoning-run-3",
+        kind: "reasoning",
+        summary: "输出最终分析报告",
+        content: "输出最终分析报告",
+      },
+    ];
+
+    const { container } = render(
+      <Messages
+        items={items}
+        threadId="thread-1"
+        workspaceId="ws-1"
+        isThinking={false}
+        activeEngine="claude"
+        openTargets={[]}
+        selectedOpenAppId=""
+      />,
+    );
+
+    expect(container.querySelectorAll(".thinking-block").length).toBe(1);
+    expect(container.textContent ?? "").toContain("输出最终分析报告");
+  });
+
+  it("renders claude live reasoning at the bottom when dock mode is enabled", () => {
+    window.localStorage.setItem("mossx.claude.hideReasoningModule", "1");
+    try {
+      const items: ConversationItem[] = [
+        {
+          id: "claude-user-1",
+          kind: "message",
+          role: "user",
+          text: "分析项目",
+        },
+        {
+          id: "claude-live-reasoning-1",
+          kind: "reasoning",
+          summary: "正在分析",
+          content: "先读取目录，再检查关键文件",
+        },
+      ];
+
+      const { container } = render(
+        <Messages
+          items={items}
+          threadId="claude:session-1"
+          workspaceId="ws-1"
+          isThinking
+          activeEngine="claude"
+          openTargets={[]}
+          selectedOpenAppId=""
+        />,
+      );
+
+      const thinkingBlock = container.querySelector(".thinking-block");
+      expect(thinkingBlock).toBeTruthy();
+      expect(thinkingBlock?.textContent ?? "").toContain("先读取目录，再检查关键文件");
+      expect(thinkingBlock?.nextElementSibling?.className ?? "").toContain("working");
+    } finally {
+      window.localStorage.removeItem("mossx.claude.hideReasoningModule");
+    }
+  });
+
+  it("keeps docked claude reasoning after turn completes and collapses it by default", () => {
+    window.localStorage.setItem("mossx.claude.hideReasoningModule", "1");
+    try {
+      const items: ConversationItem[] = [
+        {
+          id: "claude-user-2",
+          kind: "message",
+          role: "user",
+          text: "继续分析项目",
+        },
+        {
+          id: "claude-live-reasoning-2",
+          kind: "reasoning",
+          summary: "继续分析",
+          content: "读取配置，再检查事件链路",
+        },
+        {
+          id: "claude-live-reasoning-3",
+          kind: "reasoning",
+          summary: "补充分析",
+          content: "定位线程事件顺序，核对状态同步",
+        },
+      ];
+
+      const { container, rerender } = render(
+        <Messages
+          items={items}
+          threadId="claude:session-2"
+          workspaceId="ws-1"
+          isThinking
+          activeEngine="claude"
+          openTargets={[]}
+          selectedOpenAppId=""
+        />,
+      );
+
+      expect(container.querySelectorAll(".thinking-block")).toHaveLength(2);
+      const liveReasoningContents = container.querySelectorAll(".thinking-content");
+      expect(liveReasoningContents[0]?.getAttribute("style") ?? "").toContain("display: none");
+      expect(liveReasoningContents[1]?.getAttribute("style") ?? "").toContain("display: block");
+
+      rerender(
+        <Messages
+          items={items}
+          threadId="claude:session-2"
+          workspaceId="ws-1"
+          isThinking={false}
+          activeEngine="claude"
+          openTargets={[]}
+          selectedOpenAppId=""
+        />,
+      );
+
+      const thinkingBlocks = container.querySelectorAll(".thinking-block");
+      const reasoningDetails = container.querySelectorAll(".thinking-content");
+      expect(thinkingBlocks).toHaveLength(2);
+      expect(reasoningDetails[0]?.textContent ?? "").toContain("读取配置，再检查事件链路");
+      expect(reasoningDetails[1]?.textContent ?? "").toContain("定位线程事件顺序，核对状态同步");
+      expect(reasoningDetails[0]?.getAttribute("style") ?? "").toContain("display: none");
+      expect(reasoningDetails[1]?.getAttribute("style") ?? "").toContain("display: none");
+    } finally {
+      window.localStorage.removeItem("mossx.claude.hideReasoningModule");
+    }
   });
 
   it("uses content for the reasoning title when summary is empty", () => {
@@ -1681,6 +1945,39 @@ describe("Messages", () => {
 
     const activity = container.querySelector(".working-activity");
     expect(activity?.textContent ?? "").toContain("Command: rg -n TODO src @ /repo");
+  });
+
+  it("hides duplicated working activity when it mirrors reasoning label", () => {
+    const items: ConversationItem[] = [
+      {
+        id: "user-reasoning-dup-1",
+        kind: "message",
+        role: "user",
+        text: "继续执行",
+      },
+      {
+        id: "reasoning-reasoning-dup-1",
+        kind: "reasoning",
+        summary: "用户回复了 \"A\"，表示选择了偏保守重构",
+        content: "",
+      },
+    ];
+
+    const { container } = render(
+      <Messages
+        items={items}
+        threadId="thread-1"
+        workspaceId="ws-1"
+        isThinking
+        processingStartedAt={Date.now() - 3_000}
+        openTargets={[]}
+        selectedOpenAppId=""
+      />,
+    );
+
+    const workingText = container.querySelector(".working-text");
+    expect(workingText?.textContent ?? "").toContain("用户回复了");
+    expect(container.querySelector(".working-activity")).toBeNull();
   });
 
   it("does not show stale backend activity from previous turns", () => {
