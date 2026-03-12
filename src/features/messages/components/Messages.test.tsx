@@ -534,6 +534,45 @@ describe("Messages", () => {
     expect(screen.queryByText("Legacy step")).toBeNull();
   });
 
+  it("opens the external plan panel when provided instead of inline expansion", () => {
+    const onOpenPlanPanel = vi.fn();
+
+    render(
+      <Messages
+        items={[]}
+        threadId="thread-plan"
+        workspaceId="ws-plan"
+        isThinking={false}
+        conversationState={{
+          items: [],
+          plan: {
+            turnId: "turn-plan",
+            explanation: "Panel plan",
+            steps: [{ step: "Open panel", status: "pending" }],
+          },
+          userInputQueue: [],
+          meta: {
+            workspaceId: "ws-plan",
+            threadId: "thread-plan",
+            engine: "codex",
+            activeTurnId: null,
+            isThinking: false,
+            heartbeatPulse: null,
+            historyRestoredAtMs: null,
+          },
+        }}
+        onOpenPlanPanel={onOpenPlanPanel}
+        openTargets={[]}
+        selectedOpenAppId=""
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Plan" }));
+
+    expect(onOpenPlanPanel).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Open panel")).toBeNull();
+  });
+
   it("prefers conversationState items for codex when state and legacy point to the same thread", () => {
     const legacyItems: ConversationItem[] = [
       {

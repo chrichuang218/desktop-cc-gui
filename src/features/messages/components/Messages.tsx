@@ -1546,7 +1546,6 @@ export const Messages = memo(function Messages({
       }),
     [conversationState, legacyItems, legacyThreadId, legacyWorkspaceId],
   );
-  const plan = effectiveState.plan;
   const userInputRequests = effectiveState.userInputQueue;
   const workspaceId = effectiveState.meta.workspaceId || legacyWorkspaceId;
   const threadId = effectiveState.meta.threadId || legacyThreadId;
@@ -1583,9 +1582,9 @@ export const Messages = memo(function Messages({
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [activeAnchorId, setActiveAnchorId] = useState<string | null>(null);
+  const [isPlanPreviewOpen, setIsPlanPreviewOpen] = useState(false);
   const [showAllHistoryItems, setShowAllHistoryItems] = useState(false);
   const hideClaudeReasoning = activeEngine === "claude" && shouldHideClaudeReasoningModule();
-  const [isPlanPreviewOpen, setIsPlanPreviewOpen] = useState(false);
   const [isSelectionFrozen, setIsSelectionFrozen] = useState(false);
   const copyTimeoutRef = useRef<number | null>(null);
   const planPanelFocusRafRef = useRef<number | null>(null);
@@ -2188,6 +2187,19 @@ export const Messages = memo(function Messages({
       )
       : null;
 
+  const plan = effectiveState.plan;
+  useEffect(() => {
+    setIsPlanPreviewOpen(false);
+  }, [plan?.turnId]);
+
+  const handlePlanClick = useCallback(() => {
+    if (_onOpenPlanPanel) {
+      _onOpenPlanPanel();
+      return;
+    }
+    setIsPlanPreviewOpen((previous) => !previous);
+  }, [_onOpenPlanPanel]);
+
   const planQuickViewNode = plan
     ? (
       <div
@@ -2198,13 +2210,13 @@ export const Messages = memo(function Messages({
           <button
             type="button"
             className="ghost"
-            onClick={() => setIsPlanPreviewOpen((previous) => !previous)}
+            onClick={handlePlanClick}
             aria-label="Plan"
-            style={{ marginBottom: isPlanPreviewOpen ? 8 : 0 }}
+            style={{ marginBottom: !_onOpenPlanPanel && isPlanPreviewOpen ? 8 : 0 }}
           >
             Plan
           </button>
-          {isPlanPreviewOpen && (
+          {!_onOpenPlanPanel && isPlanPreviewOpen && (
             <div style={{ display: "grid", gap: 6 }}>
               {plan.explanation ? <div>{plan.explanation}</div> : null}
               {plan.steps.map((step, index) => (

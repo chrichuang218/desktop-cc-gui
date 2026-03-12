@@ -144,7 +144,8 @@ import {
 // Feature flags to show/hide settings sidebar entries
 const SHOW_DICTATION_ENTRY = false;
 const SHOW_GIT_ENTRY = false;
-const SHOW_CODEX_AND_EXPERIMENTAL = false;
+const SHOW_CODEX_ENTRY = false;
+const SHOW_EXPERIMENTAL_ENTRY = false;
 const SHOW_COMMIT_ENTRY = false;
 const SHOW_COMPOSER_ENTRY = false;
 const SHOW_SHORTCUTS_ENTRY = false;
@@ -1879,17 +1880,19 @@ export function SettingsView({
               <MoreHorizontalIcon aria-hidden />
               {!sidebarCollapsed && t("settings.sidebarOther")}
             </button>
-            {SHOW_CODEX_AND_EXPERIMENTAL && (
+            {SHOW_CODEX_ENTRY && (
+              <button
+                type="button"
+                className={`settings-nav ${activeSection === "codex" ? "active" : ""}`}
+                onClick={() => setActiveSection("codex")}
+                title={sidebarCollapsed ? t("settings.sidebarCodex") : ""}
+              >
+                <TerminalSquare aria-hidden />
+                {!sidebarCollapsed && t("settings.sidebarCodex")}
+              </button>
+            )}
+            {SHOW_EXPERIMENTAL_ENTRY && (
               <>
-                <button
-                  type="button"
-                  className={`settings-nav ${activeSection === "codex" ? "active" : ""}`}
-                  onClick={() => setActiveSection("codex")}
-                  title={sidebarCollapsed ? t("settings.sidebarCodex") : ""}
-                >
-                  <TerminalSquare aria-hidden />
-                  {!sidebarCollapsed && t("settings.sidebarCodex")}
-                </button>
                 <button
                   type="button"
                   className={`settings-nav ${activeSection === "experimental" ? "active" : ""}`}
@@ -4166,6 +4169,35 @@ export function SettingsView({
                       <div>
                         {t("settings.appServerLabel")} {doctorState.result.appServerOk ? t("settings.statusOk") : t("settings.statusFailed")}
                       </div>
+                      {doctorState.result.appServerProbeStatus && (
+                        <div>
+                          <strong>{t("settings.doctorAppServerProbe")}:</strong> {doctorState.result.appServerProbeStatus}
+                        </div>
+                      )}
+                      {doctorState.result.resolvedBinaryPath && (
+                        <div>
+                          <strong>{t("settings.doctorResolvedBinary")}:</strong> {doctorState.result.resolvedBinaryPath}
+                        </div>
+                      )}
+                      {doctorState.result.wrapperKind && (
+                        <div>
+                          <strong>{t("settings.doctorWrapperKind")}:</strong> {doctorState.result.wrapperKind}
+                        </div>
+                      )}
+                      {doctorState.result.fallbackRetried ? (
+                        <div>
+                          <strong>{t("settings.doctorWrapperFallbackRetry")}:</strong> {t("settings.doctorAttempted")}
+                        </div>
+                      ) : null}
+                      {doctorState.result.proxyEnvSnapshot &&
+                      Object.keys(doctorState.result.proxyEnvSnapshot).length > 0 ? (
+                        <div>
+                          <strong>{t("settings.doctorProxyEnvironment")}:</strong>{" "}
+                          {Object.entries(doctorState.result.proxyEnvSnapshot)
+                            .map(([key, value]) => `${key}=${value ?? t("settings.notSet")}`)
+                            .join(" · ")}
+                        </div>
+                      ) : null}
                       <div>
                         {t("settings.nodeLabel")}{" "}
                         {doctorState.result.nodeOk
@@ -4187,14 +4219,27 @@ export function SettingsView({
                       {doctorState.result.debug && (
                         <details className="settings-doctor-debug">
                           <summary style={{ cursor: "pointer", marginTop: "8px", fontWeight: "bold" }}>
-                            Debug Info (Click to expand)
+                            {t("settings.doctorDebugInfo")} ({t("settings.doctorClickToExpand")})
                           </summary>
                           <div style={{ marginTop: "8px", fontSize: "12px", fontFamily: "monospace", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
-                            <div><strong>Platform:</strong> {doctorState.result.debug.platform} ({doctorState.result.debug.arch})</div>
-                            <div><strong>Claude Found:</strong> {doctorState.result.debug.claudeFound ?? "Not found"}</div>
-                            <div><strong>Codex Found:</strong> {doctorState.result.debug.codexFound ?? "Not found"}</div>
-                            <div><strong>Claude (standard which):</strong> {doctorState.result.debug.claudeStandardWhich ?? "Not found"}</div>
-                            <div><strong>Codex (standard which):</strong> {doctorState.result.debug.codexStandardWhich ?? "Not found"}</div>
+                            <div><strong>{t("settings.doctorPlatform")}:</strong> {doctorState.result.debug.platform} ({doctorState.result.debug.arch})</div>
+                            <div><strong>{t("settings.doctorResolvedBinary")}:</strong> {doctorState.result.debug.resolvedBinaryPath ?? t("settings.notFound")}</div>
+                            <div><strong>{t("settings.doctorWrapperKind")}:</strong> {doctorState.result.debug.wrapperKind ?? t("settings.statusUnknown")}</div>
+                            <div><strong>{t("settings.doctorPathUsed")}:</strong> {doctorState.result.debug.pathEnvUsed ?? t("settings.notSet")}</div>
+                            <div><strong>{t("settings.doctorClaudeFound")}:</strong> {doctorState.result.debug.claudeFound ?? t("settings.notFound")}</div>
+                            <div><strong>{t("settings.doctorCodexFound")}:</strong> {doctorState.result.debug.codexFound ?? t("settings.notFound")}</div>
+                            <div><strong>{t("settings.doctorClaudeStandardWhich")}:</strong> {doctorState.result.debug.claudeStandardWhich ?? t("settings.notFound")}</div>
+                            <div><strong>{t("settings.doctorCodexStandardWhich")}:</strong> {doctorState.result.debug.codexStandardWhich ?? t("settings.notFound")}</div>
+                            {doctorState.result.debug.proxyEnvSnapshot && (
+                              <>
+                                <div style={{ marginTop: "8px" }}><strong>{t("settings.doctorProxyEnvironment")}:</strong></div>
+                                {Object.entries(doctorState.result.debug.proxyEnvSnapshot).map(([key, value]) => (
+                                  <div key={key} style={{ marginLeft: "12px" }}>
+                                    <strong>{key}:</strong> {value ?? t("settings.notSet")}
+                                  </div>
+                                ))}
+                              </>
+                            )}
                             <div style={{ marginTop: "8px" }}><strong>Environment Variables:</strong></div>
                             {Object.entries(doctorState.result.debug.envVars).map(([key, value]) => (
                               <div key={key} style={{ marginLeft: "12px" }}>
