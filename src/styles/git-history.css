@@ -952,6 +952,10 @@ body[data-git-history-column-resizing="true"] .git-history-vertical-resizer::aft
   font-size: 13px;
   font-weight: 560;
   flex: 0 1 auto;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+  height: 20px;
 }
 
 .git-history-worktree-section-indicator {
@@ -959,6 +963,18 @@ body[data-git-history-column-resizing="true"] .git-history-vertical-resizer::aft
   align-items: center;
   gap: 4px;
   white-space: nowrap;
+  line-height: 1;
+}
+
+.git-history-worktree-summary-label .git-history-worktree-section-indicator {
+  height: 20px;
+  align-items: center;
+}
+
+.git-history-worktree-section-indicator svg {
+  display: block;
+  width: 12px;
+  height: 12px;
 }
 
 .git-history-worktree-section-indicator strong {
@@ -973,6 +989,7 @@ body[data-git-history-column-resizing="true"] .git-history-vertical-resizer::aft
 .git-history-worktree-section-indicator.is-unstaged {
   color: color-mix(in srgb, var(--text-secondary) 88%, var(--text-primary));
 }
+
 
 .git-history-worktree-summary-actions {
   display: inline-flex;

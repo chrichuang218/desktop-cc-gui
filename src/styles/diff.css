@@ -487,6 +487,9 @@
 .diff-tree-summary-section-label {
   color: var(--text-secondary);
   flex: 0 1 auto;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
 }
 
 .diff-section-indicator {
@@ -495,6 +498,13 @@
   gap: 4px;
   white-space: nowrap;
   color: var(--text-secondary);
+  line-height: 1;
+}
+
+.diff-section-indicator svg {
+  display: block;
+  width: 12px;
+  height: 12px;
 }
 
 .diff-section-indicator strong {
@@ -509,6 +519,7 @@
 .diff-section-indicator.is-unstaged {
   color: color-mix(in srgb, var(--text-secondary) 88%, var(--text-primary));
 }
+
 
 .diff-list-view-toggle {
   display: inline-flex;
