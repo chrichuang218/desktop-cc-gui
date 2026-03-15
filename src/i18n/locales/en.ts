@@ -157,6 +157,8 @@ const en = {
     showThreadsSidebar: "Show threads sidebar",
     hideGitSidebar: "Hide right sidebar",
     showGitSidebar: "Show right sidebar",
+    enterSoloMode: "Enter SOLO mode",
+    exitSoloMode: "Exit SOLO mode",
     quickNewThread: "New Thread",
     quickAutomation: "Panel",
     quickSearch: "Search",
@@ -1792,7 +1794,65 @@ const en = {
     files: "Files",
     search: "Search",
     memory: "Memory",
+    activity: "Activity",
     prompts: "Prompts",
+  },
+
+  activityPanel: {
+    title: "Session activity",
+    noRoot: "Current task",
+    selectWorkspace: "Select a workspace to inspect session activity.",
+    emptyIdle: "No session activity yet.",
+    emptyRunning: "Waiting for session activity...",
+    emptyCompleted: "This task finished without tracked activity in phase one.",
+    eventsCount: "{{count}} events",
+    sessionsCount: "{{count}} sessions",
+    liveNow: "live",
+    command: "Command",
+    commandPendingSummary: "Running command",
+    commandCategories: {
+      command: "Command",
+      search: "Search",
+      read: "Read",
+      list: "List",
+      git: "Git",
+      test: "Test",
+      lint: "Lint",
+      build: "Build",
+      run: "Run",
+    },
+    description: "Description",
+    cwd: "CWD",
+    waitingForOutput: "Waiting for command output...",
+    waitingForReasoning: "Waiting for thinking content...",
+    rootSession: "root",
+    childSession: "child",
+    relatedSessions: "Related",
+    fallbackLinking: "fallback link",
+    liveEditPreview: "Live preview",
+    enableLiveEditPreview: "Enable live edit preview",
+    disableLiveEditPreview: "Disable live edit preview",
+    showOutput: "Show output",
+    hideOutput: "Hide output",
+    expandTurnGroup: "Expand turn group",
+    collapseTurnGroup: "Collapse turn group",
+    turnGroup: "Turn {{index}}",
+    turnGroupFallback: "Legacy activity",
+    tabs: {
+      ariaLabel: "Session activity categories",
+      all: "Summary",
+      command: "Command",
+      file: "File",
+      task: "Task",
+      explore: "Explore",
+      reasoning: "Thinking",
+    },
+    status: {
+      running: "running",
+      completed: "completed",
+      failed: "failed",
+      pending: "pending",
+    },
   },
 
   memory: {
@@ -3505,6 +3565,7 @@ const en = {
 
   // Permission modes
   modes: {
+    selectMode: "Select Mode",
     default: {
       label: "Default Mode",
       tooltip: "Standard permission behavior",
@@ -3553,6 +3614,7 @@ const en = {
 
   // Model labels
   models: {
+    selectModel: "Select Model",
     addModel: "Add Model",
     claude: {
       sonnet46: {
