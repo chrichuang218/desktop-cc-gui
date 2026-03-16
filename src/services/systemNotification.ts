@@ -47,7 +47,9 @@ function registerActionListener() {
       const window = getCurrentWindow();
       await window.show();
       await window.setFocus();
-    } catch {}
+    } catch (_error) {
+      // Best-effort only: notification click should continue even if window focus fails.
+    }
     if (actionHandler && notification.extra) {
       actionHandler(notification.extra);
     }
@@ -55,7 +57,7 @@ function registerActionListener() {
     .then(() => {
       actionListenerRegistered = true;
     })
-    .catch(() => {});
+    .catch(() => undefined);
 }
 
 export function setNotificationActionHandler(handler: NotificationActionHandler) {

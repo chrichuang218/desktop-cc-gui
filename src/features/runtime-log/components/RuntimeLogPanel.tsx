@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import ArrowDownToLine from "lucide-react/dist/esm/icons/arrow-down-to-line";
@@ -45,7 +45,8 @@ export type RuntimeLogPanelProps = {
   onToggleWrapLines?: () => void;
 };
 
-const ANSI_ESCAPE_PATTERN = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
+const ESCAPE_CHAR = String.fromCharCode(27);
+const ANSI_ESCAPE_PATTERN = new RegExp(`${ESCAPE_CHAR}\\[[0-9;?]*[ -/]*[@-~]`, "g");
 const LOG_TOKEN_PATTERN =
   /(\bTRACE\b|\bDEBUG\b|\bINFO\b|\bWARN\b|\bERROR\b|\[\s*[\w\-:.]+\s*\]|(?:\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d{3})?)|(?:[a-z_][\w$]*\.)+[A-Za-z_$][\w$]*(?:@[0-9a-fA-F]+)?|---)/g;
 const TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d{3})?$/;
@@ -366,19 +367,11 @@ function renderJavaToken(token: string, keyPrefix: string) {
   const packagePart = symbolPart.slice(0, splitAt + 1);
   const classPart = symbolPart.slice(splitAt + 1);
   return (
-    <>
-      <span key={`${keyPrefix}-pkg`} className="runtime-console-token is-java-package">
-        {packagePart}
-      </span>
-      <span key={`${keyPrefix}-class`} className="runtime-console-token is-java-class">
-        {classPart}
-      </span>
-      {hashPart ? (
-        <span key={`${keyPrefix}-hash`} className="runtime-console-token is-java-meta">
-          {hashPart}
-        </span>
-      ) : null}
-    </>
+    <Fragment key={`${keyPrefix}-java`}>
+      <span className="runtime-console-token is-java-package">{packagePart}</span>
+      <span className="runtime-console-token is-java-class">{classPart}</span>
+      {hashPart ? <span className="runtime-console-token is-java-meta">{hashPart}</span> : null}
+    </Fragment>
   );
 }
 

@@ -100,6 +100,17 @@ function escapeHtml(value: string) {
     .replace(/>/g, "&gt;");
 }
 
+function stripAsciiControlChars(value: string) {
+  let sanitized = "";
+  for (const char of value) {
+    const code = char.charCodeAt(0);
+    if (code === 9 || code === 10 || code === 13 || (code >= 32 && code !== 127)) {
+      sanitized += char;
+    }
+  }
+  return sanitized;
+}
+
 function stripWrappingQuotes(token: string) {
   if (token.length >= 2) {
     const first = token[0];
@@ -284,13 +295,13 @@ export function normalizeCommandMarkdownOutput(output: string) {
 
   let normalized = trimmed
     .replace(/\\`\\`\\`/g, "```")
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
     .replace(/^-{2,}\s*(?=#)/, "")
     .replace(/(#{1,6})(?![#\s])(?=\S)/g, "$1 ")
     .replace(/```([A-Za-z0-9_-]*)/g, (_match, lang: string) => `|${"```"}${lang}|`)
     .replace(/([^|#])(?=#{1,6}\s)/g, "$1|")
     .replace(/([^|])(?=(?:\d+\.\s+\S|[-*+]\s+\S))/g, "$1|")
     .replace(/\|\|+/g, "|");
+  normalized = stripAsciiControlChars(normalized);
 
   const fencePlaceholder = "__SESSION_ACTIVITY_FENCE__";
   normalized = normalized.replace(/```/g, fencePlaceholder);
