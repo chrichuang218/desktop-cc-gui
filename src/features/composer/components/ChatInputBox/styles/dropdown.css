@@ -110,6 +110,14 @@
   text-overflow: ellipsis;
 }
 
+.dropdown-item-scope {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  margin-left: 8px;
+  flex: 0 0 auto;
+}
+
 /* Portal tooltip animation */
 @keyframes tooltip-fade-in {
   from {

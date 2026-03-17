@@ -13,6 +13,7 @@ export interface UseNativeEventCaptureOptions {
   fileCompletion: CompletionOpenLike;
   memoryCompletion: CompletionOpenLike;
   commandCompletion: CompletionOpenLike;
+  skillCompletion: CompletionOpenLike;
   agentCompletion: CompletionOpenLike;
   promptCompletion: CompletionOpenLike;
   completionSelectedRef: MutableRefObject<boolean>;
@@ -37,6 +38,7 @@ export function useNativeEventCapture({
   fileCompletion,
   memoryCompletion,
   commandCompletion,
+  skillCompletion,
   agentCompletion,
   promptCompletion,
   completionSelectedRef,
@@ -55,6 +57,7 @@ export function useNativeEventCapture({
     fileCompletion,
     memoryCompletion,
     commandCompletion,
+    skillCompletion,
     agentCompletion,
     promptCompletion,
     completionSelectedRef,
@@ -70,6 +73,7 @@ export function useNativeEventCapture({
     fileCompletion,
     memoryCompletion,
     commandCompletion,
+    skillCompletion,
     agentCompletion,
     promptCompletion,
     completionSelectedRef,
@@ -122,6 +126,7 @@ export function useNativeEventCapture({
         latest.fileCompletion.isOpen ||
         latest.memoryCompletion.isOpen ||
         latest.commandCompletion.isOpen ||
+        latest.skillCompletion.isOpen ||
         latest.agentCompletion.isOpen ||
         latest.promptCompletion.isOpen
       ) {
@@ -197,6 +202,7 @@ export function useNativeEventCapture({
         latest.fileCompletion.isOpen ||
         latest.memoryCompletion.isOpen ||
         latest.commandCompletion.isOpen ||
+        latest.skillCompletion.isOpen ||
         latest.agentCompletion.isOpen ||
         latest.promptCompletion.isOpen
       ) {

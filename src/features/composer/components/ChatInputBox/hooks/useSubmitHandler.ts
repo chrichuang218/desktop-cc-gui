@@ -22,6 +22,7 @@ export interface UseSubmitHandlerOptions {
   fileCompletion: CompletionLike;
   memoryCompletion: CompletionLike;
   commandCompletion: CompletionLike;
+  skillCompletion: CompletionLike;
   agentCompletion: CompletionLike;
   promptCompletion: CompletionLike;
   recordInputHistory: (text: string) => void;
@@ -53,6 +54,7 @@ export function useSubmitHandler({
   fileCompletion,
   memoryCompletion,
   commandCompletion,
+  skillCompletion,
   agentCompletion,
   promptCompletion,
   recordInputHistory,
@@ -91,6 +93,7 @@ export function useSubmitHandler({
     fileCompletion.close();
     memoryCompletion.close();
     commandCompletion.close();
+    skillCompletion.close();
     agentCompletion.close();
     promptCompletion.close();
 
@@ -126,6 +129,7 @@ export function useSubmitHandler({
     fileCompletion,
     memoryCompletion,
     commandCompletion,
+    skillCompletion,
     agentCompletion,
     promptCompletion,
     recordInputHistory,

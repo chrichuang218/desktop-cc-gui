@@ -1384,9 +1384,12 @@ const zhPart2 = {
   // 聊天输入框
   chat: {
     sendMessage: "给 {{provider}} 发送消息",
-    inputPlaceholder: "@引用文件，#唤起智能体，!插入提示词，Enter 发送",
-    inputPlaceholderEnter: "@引用文件，#唤起智能体，!插入提示词，Enter 发送",
-    inputPlaceholderCmdEnter: "@引用文件，#唤起智能体，!插入提示词，\u2318/Ctrl+Enter 发送",
+    inputPlaceholder: "@引用文件，@@引用记忆，$选择技能，#唤起智能体，!插入提示词，Enter 发送",
+    inputPlaceholderEnter: "@引用文件，@@引用记忆，$选择技能，#唤起智能体，!插入提示词，Enter 发送",
+    inputPlaceholderCmdEnter:
+      "@引用文件，@@引用记忆，$选择技能，#唤起智能体，!插入提示词，\u2318/Ctrl+Enter 发送",
+    skillScopeProject: "项目技能",
+    skillScopeGlobal: "全局技能",
     sendMessageEnter: "发送消息 (Enter)",
     sendMessageCmdEnter: "发送消息 (\u2318/Ctrl+Enter)",
     currentMode: "当前模式: {{mode}}",

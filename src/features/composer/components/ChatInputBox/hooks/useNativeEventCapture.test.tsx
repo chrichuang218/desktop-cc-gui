@@ -53,6 +53,7 @@ function Harness({
     fileCompletion: closedCompletion,
     memoryCompletion: closedCompletion,
     commandCompletion: closedCompletion,
+    skillCompletion: closedCompletion,
     agentCompletion: closedCompletion,
     promptCompletion: closedCompletion,
     completionSelectedRef,

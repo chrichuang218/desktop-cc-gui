@@ -1409,10 +1409,14 @@ const enPart2 = {
   // Chat input box
   chat: {
     sendMessage: "Send message to {{provider}}",
-    inputPlaceholder: "@reference files, #invoke agents, !insert prompts, Enter to send",
-    inputPlaceholderEnter: "@reference files, #invoke agents, !insert prompts, Enter to send",
+    inputPlaceholder:
+      "@reference files, @@reference memories, $select skills, #invoke agents, !insert prompts, Enter to send",
+    inputPlaceholderEnter:
+      "@reference files, @@reference memories, $select skills, #invoke agents, !insert prompts, Enter to send",
     inputPlaceholderCmdEnter:
-      "@reference files, #invoke agents, !insert prompts, \u2318/Ctrl+Enter to send",
+      "@reference files, @@reference memories, $select skills, #invoke agents, !insert prompts, \u2318/Ctrl+Enter to send",
+    skillScopeProject: "Project skill",
+    skillScopeGlobal: "Global skill",
     sendMessageEnter: "Send message (Enter)",
     sendMessageCmdEnter: "Send message (\u2318/Ctrl+Enter)",
     currentMode: "Current mode: {{mode}}",

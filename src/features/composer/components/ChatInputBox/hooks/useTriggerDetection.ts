@@ -357,6 +357,40 @@ function detectSlashTrigger(text: string, cursorPosition: number): TriggerQuery 
 }
 
 /**
+ * Detect $ skill trigger
+ * Trigger is valid only when at token boundary (line start or whitespace before $).
+ */
+function detectDollarTrigger(text: string, cursorPosition: number): TriggerQuery | null {
+  let start = cursorPosition - 1;
+  while (start >= 0) {
+    const char = text[start];
+
+    if (char === '\n') {
+      return null;
+    }
+    if (isWhitespace(char)) {
+      return null;
+    }
+
+    if (char === '$') {
+      const isTokenStart = start === 0 || text[start - 1] === '\n' || isWhitespace(text[start - 1]);
+      if (!isTokenStart) {
+        return null;
+      }
+      const query = text.slice(start + 1, cursorPosition);
+      return {
+        trigger: '$',
+        query,
+        start,
+        end: cursorPosition,
+      };
+    }
+    start -= 1;
+  }
+  return null;
+}
+
+/**
  * Detect # agent trigger (only at line start)
  */
 function detectHashTrigger(text: string, cursorPosition: number): TriggerQuery | null {
@@ -434,7 +468,7 @@ function detectExclamationTrigger(text: string, cursorPosition: number): Trigger
 
 /**
  * useTriggerDetection - Trigger detection hook
- * Detects @@, @, /, # or ! trigger symbols in the input box
+ * Detects @@, @, /, $, # or ! trigger symbols in the input box
  */
 export function useTriggerDetection() {
   /**
@@ -456,6 +490,10 @@ export function useTriggerDetection() {
     // Detect /
     const slashTrigger = detectSlashTrigger(text, cursorPosition);
     if (slashTrigger) return slashTrigger;
+
+    // Detect $
+    const dollarTrigger = detectDollarTrigger(text, cursorPosition);
+    if (dollarTrigger) return dollarTrigger;
 
     // Detect # (agent trigger)
     const hashTrigger = detectHashTrigger(text, cursorPosition);

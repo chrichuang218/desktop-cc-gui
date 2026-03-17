@@ -151,6 +151,10 @@ fn normalize_skill_name(name: &str) -> String {
     name.trim().to_ascii_lowercase()
 }
 
+fn is_global_source(source: &str) -> bool {
+    source.starts_with("global_")
+}
+
 /// Extract description from YAML frontmatter of a .md file.
 /// Only reads the first MAX_FRONTMATTER_LINES lines using BufRead.
 fn extract_description(path: &Path) -> Option<String> {
@@ -326,14 +330,20 @@ fn discover_skills_in(dir: &Path, source: &str) -> Result<Vec<SkillEntry>, Skill
 fn merge_skills_by_priority(sources: Vec<Vec<SkillEntry>>) -> Vec<SkillEntry> {
     let mut merged: Vec<SkillEntry> = Vec::new();
     let mut seen_names: HashSet<String> = HashSet::new();
+    let mut seen_global_names: HashSet<String> = HashSet::new();
 
     for source in sources {
         for skill in source {
             let normalized_name = normalize_skill_name(&skill.name);
-            if seen_names.contains(&normalized_name) {
+            let seen = if is_global_source(&skill.source) {
+                &mut seen_global_names
+            } else {
+                &mut seen_names
+            };
+            if seen.contains(&normalized_name) {
                 continue;
             }
-            seen_names.insert(normalized_name);
+            seen.insert(normalized_name);
             merged.push(skill);
         }
     }
@@ -527,9 +537,17 @@ mod tests {
             vec![agents_skill],
         ]);
 
-        assert_eq!(merged.len(), 1);
-        assert_eq!(merged[0].name, "shared");
-        assert_eq!(merged[0].path, workspace_skill.path);
+        assert_eq!(merged.len(), 2);
+        assert!(merged.iter().any(|entry| {
+            entry.name == "shared"
+                && entry.path == workspace_skill.path
+                && entry.source == SKILL_SOURCE_WORKSPACE_MANAGED
+        }));
+        assert!(merged.iter().any(|entry| {
+            entry.name == "shared"
+                && entry.source == SKILL_SOURCE_GLOBAL_CLAUDE
+                && entry.path == "/home/.claude/skills/shared.md"
+        }));
     }
 
     #[test]

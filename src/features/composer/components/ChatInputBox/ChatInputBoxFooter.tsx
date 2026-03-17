@@ -186,6 +186,7 @@ export function ChatInputBoxFooter({
   fileCompletion,
   memoryCompletion,
   commandCompletion,
+  skillCompletion,
   agentCompletion,
   promptCompletion,
   selectedManualMemoryIds = [],
@@ -231,6 +232,7 @@ export function ChatInputBoxFooter({
   fileCompletion: CompletionController;
   memoryCompletion: CompletionController;
   commandCompletion: CompletionController;
+  skillCompletion: CompletionController;
   agentCompletion: CompletionController;
   promptCompletion: CompletionController;
   selectedManualMemoryIds?: string[];
@@ -541,6 +543,20 @@ export function ChatInputBoxFooter({
         onClose={commandCompletion.close}
         onSelect={(_, index) => commandCompletion.selectIndex(index)}
         onMouseEnter={commandCompletion.handleMouseEnter}
+      />
+
+      {/* $ skill dropdown menu */}
+      <CompletionDropdown
+        isVisible={skillCompletion.isOpen}
+        position={skillCompletion.position}
+        width={450}
+        items={skillCompletion.items}
+        selectedIndex={skillCompletion.activeIndex}
+        loading={skillCompletion.loading}
+        emptyText={t('chat.noMatchingCommands')}
+        onClose={skillCompletion.close}
+        onSelect={(_, index) => skillCompletion.selectIndex(index)}
+        onMouseEnter={skillCompletion.handleMouseEnter}
       />
 
       {/* # agent selection dropdown menu */}

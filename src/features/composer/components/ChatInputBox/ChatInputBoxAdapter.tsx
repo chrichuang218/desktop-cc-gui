@@ -27,6 +27,7 @@ import type {
   SelectedAgent,
   FileItem,
   CommandItem,
+  SkillItem,
 } from './types';
 import type { QueuedMessage as ComposerQueuedMessage } from '../../../../types';
 import type { CustomCommandOption } from '../../../../types';
@@ -41,6 +42,7 @@ import {
   switchClaudeProvider,
   updateClaudeProvider,
   getWorkspaceDirectoryChildren,
+  getSkillsList,
 } from '../../../../services/tauri';
 
 // Re-export the handle type for Composer to use
@@ -157,6 +159,7 @@ export interface ChatInputBoxAdapterProps {
   commands?: CustomCommandOption[];
   workspaceId?: string | null;
   onManualMemorySelect?: (memory: ManualMemorySelection) => void;
+  onSelectSkill?: (skillName: string) => void;
 
   // Header/context bar
   placeholder?: string;
@@ -315,6 +318,68 @@ function extensionFromFileName(fileName: string): string {
   return fileName.slice(idx + 1).toLowerCase();
 }
 
+function flattenSkillBuckets(buckets: unknown) {
+  if (!Array.isArray(buckets)) {
+    return [] as any[];
+  }
+  return buckets.flatMap((bucket: any) =>
+    Array.isArray(bucket?.skills) ? bucket.skills : [],
+  );
+}
+
+function extractRawSkills(response: unknown) {
+  const payload = response as any;
+
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+  if (Array.isArray(payload?.skills)) {
+    return payload.skills;
+  }
+  if (Array.isArray(payload?.result?.skills)) {
+    return payload.result.skills;
+  }
+
+  const fromResultData = flattenSkillBuckets(payload?.result?.data);
+  if (fromResultData.length > 0) {
+    return fromResultData;
+  }
+
+  const fromData = flattenSkillBuckets(payload?.data);
+  if (fromData.length > 0) {
+    return fromData;
+  }
+
+  if (Array.isArray(payload?.result)) {
+    return payload.result;
+  }
+
+  return [] as any[];
+}
+
+const SKILL_SOURCE_PRIORITY: Record<string, number> = {
+  workspace_managed: 0,
+  project_claude: 1,
+  project_codex: 2,
+  project_agents: 3,
+  global_claude: 4,
+  global_codex: 5,
+  global_agents: 6,
+};
+
+function normalizeSkillName(value: unknown) {
+  return String(value ?? '')
+    .trim()
+    .replace(/^[/$]+/, '');
+}
+
+function resolveSkillScope(source?: string): 'global' | 'project' {
+  if (source && source.startsWith('global_')) {
+    return 'global';
+  }
+  return 'project';
+}
+
 export const ChatInputBoxAdapter = forwardRef<ChatInputBoxHandle, ChatInputBoxAdapterProps>(
   (props, ref) => {
     const {
@@ -357,6 +422,7 @@ export const ChatInputBoxAdapter = forwardRef<ChatInputBoxHandle, ChatInputBoxAd
       commands,
       workspaceId,
       onManualMemorySelect,
+      onSelectSkill,
       placeholder,
       sendShortcut = 'enter',
       activeFile,
@@ -829,6 +895,73 @@ export const ChatInputBoxAdapter = forwardRef<ChatInputBoxHandle, ChatInputBoxAd
       [completionCommands],
     );
 
+    const skillCompletionProvider = useCallback(
+      async (query: string, signal: AbortSignal): Promise<SkillItem[]> => {
+        if (!workspaceId || signal.aborted) {
+          return [];
+        }
+
+        const response = await getSkillsList(workspaceId);
+        if (signal.aborted) {
+          throw new DOMException('Aborted', 'AbortError');
+        }
+
+        const rawSkills = extractRawSkills(response);
+        const dedupedByScopeAndName = new Map<string, SkillItem>();
+        const normalizedQuery = query.trim().toLowerCase();
+
+        for (const item of rawSkills) {
+          if (!item || typeof item !== 'object' || item.enabled === false) {
+            continue;
+          }
+          const name = normalizeSkillName(item.name ?? item.skillName);
+          if (!name) {
+            continue;
+          }
+          const source = item.source ? String(item.source).trim() : undefined;
+          const description = item.description ?? item.shortDescription ?? item.interface?.shortDescription;
+          const scope = resolveSkillScope(source);
+          const skill: SkillItem = {
+            name,
+            path: String(item.path ?? ''),
+            description: typeof description === 'string' ? description.trim() : undefined,
+            source,
+            scopeLabel: scope === 'global' ? t('chat.skillScopeGlobal') : t('chat.skillScopeProject'),
+          };
+
+          const key = `${scope}:${name.toLowerCase()}`;
+          const prev = dedupedByScopeAndName.get(key);
+          if (!prev) {
+            dedupedByScopeAndName.set(key, skill);
+            continue;
+          }
+          const prevPriority = SKILL_SOURCE_PRIORITY[prev.source ?? ''] ?? Number.MAX_SAFE_INTEGER;
+          const currentPriority = SKILL_SOURCE_PRIORITY[source ?? ''] ?? Number.MAX_SAFE_INTEGER;
+          if (currentPriority < prevPriority) {
+            dedupedByScopeAndName.set(key, skill);
+          }
+        }
+
+        return Array.from(dedupedByScopeAndName.values())
+          .filter((skill) => {
+            if (!normalizedQuery) {
+              return true;
+            }
+            const text = `${skill.name} ${skill.description ?? ''}`.toLowerCase();
+            return text.includes(normalizedQuery);
+          })
+          .sort((a, b) => {
+            const ap = SKILL_SOURCE_PRIORITY[a.source ?? ''] ?? Number.MAX_SAFE_INTEGER;
+            const bp = SKILL_SOURCE_PRIORITY[b.source ?? ''] ?? Number.MAX_SAFE_INTEGER;
+            if (ap !== bp) {
+              return ap - bp;
+            }
+            return a.name.localeCompare(b.name);
+          });
+      },
+      [workspaceId],
+    );
+
     return (
       <ChatInputBox
         ref={chatInputRef}
@@ -903,8 +1036,10 @@ export const ChatInputBoxAdapter = forwardRef<ChatInputBoxHandle, ChatInputBoxAd
         sdkInstalled={true}
         fileCompletionProvider={fileCompletionProvider}
         commandCompletionProvider={commandCompletionProvider}
+        skillCompletionProvider={skillCompletionProvider}
         manualMemoryCompletionProvider={manualMemoryCompletionProvider}
         onSelectManualMemory={onManualMemorySelect}
+        onSelectSkill={onSelectSkill}
       />
     );
   }

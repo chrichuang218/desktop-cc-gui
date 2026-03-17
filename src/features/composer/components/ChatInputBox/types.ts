@@ -135,6 +135,22 @@ export interface CommandItem {
 }
 
 /**
+ * Skill item (returned from skills list APIs)
+ */
+export interface SkillItem {
+  /** Skill name */
+  name: string;
+  /** Full path */
+  path: string;
+  /** Skill description */
+  description?: string;
+  /** Source bucket */
+  source?: string;
+  /** User-facing scope label */
+  scopeLabel?: string;
+}
+
+/**
  * Manual memory completion item (for @@ trigger)
  */
 export interface ManualMemoryItem {
@@ -166,7 +182,7 @@ export interface DropdownPosition {
  * Trigger query information
  */
 export interface TriggerQuery {
-  /** Trigger symbol ('@' or '@@' or '/' or '#' or '!') */
+  /** Trigger symbol ('@' or '@@' or '/' or '$' or '#' or '!') */
   trigger: string;
   /** Search keyword */
   query: string;
@@ -604,6 +620,8 @@ export interface ChatInputBoxProps {
   fileCompletionProvider?: (query: string, signal: AbortSignal) => Promise<FileItem[]>;
   /** Optional slash command provider override (for host app local data) */
   commandCompletionProvider?: (query: string, signal: AbortSignal) => Promise<CommandItem[]>;
+  /** Optional skill completion provider override (for $ skill insertion) */
+  skillCompletionProvider?: (query: string, signal: AbortSignal) => Promise<SkillItem[]>;
   /** Optional manual memory completion provider override (for @@ memory linking) */
   manualMemoryCompletionProvider?: (
     query: string,
@@ -611,6 +629,8 @@ export interface ChatInputBoxProps {
   ) => Promise<ManualMemoryItem[]>;
   /** Triggered when a manual memory is selected from @@ completion */
   onSelectManualMemory?: (memory: ManualMemoryItem) => void;
+  /** Triggered when a skill is selected from $ completion */
+  onSelectSkill?: (skillName: string) => void;
 }
 
 /**

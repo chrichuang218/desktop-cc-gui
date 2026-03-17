@@ -751,6 +751,14 @@ export const Composer = memo(function Composer({
     });
   }, []);
 
+  const handleSelectSkill = useCallback((skillName: string) => {
+    const normalized = skillName.trim();
+    if (!normalized) {
+      return;
+    }
+    setSelectedSkillNames((prev) => mergeUniqueNames(prev, [normalized]));
+  }, []);
+
   const {
     isAutocompleteOpen,
     activeAutocompleteTrigger: _activeAutocompleteTrigger,
@@ -1277,6 +1285,7 @@ export const Composer = memo(function Composer({
           commands={commands}
           workspaceId={activeWorkspaceId}
           onManualMemorySelect={handleSelectManualMemory}
+          onSelectSkill={handleSelectSkill}
           sendShortcut={sendShortcut}
           placeholder={
             sendShortcut === "cmdEnter"

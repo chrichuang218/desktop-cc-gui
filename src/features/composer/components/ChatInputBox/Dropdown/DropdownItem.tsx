@@ -10,6 +10,11 @@ export const DropdownItem = ({
   onClick,
   onMouseEnter,
 }: DropdownItemProps) => {
+  const scopeLabel = (() => {
+    const data = item.data as Record<string, unknown> | undefined;
+    const raw = data?.scopeLabel;
+    return typeof raw === 'string' && raw.trim().length > 0 ? raw.trim() : '';
+  })();
 
   /**
    * Render icon
@@ -83,6 +88,9 @@ export const DropdownItem = ({
       {renderIcon()}
       <div className="dropdown-item-content">
         <div className="dropdown-item-label">{item.label}</div>
+        {!item.description && scopeLabel && (
+          <div className="dropdown-item-scope">{scopeLabel}</div>
+        )}
         {item.description && (
           <div className="dropdown-item-description">{item.description}</div>
         )}
