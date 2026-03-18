@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import type { QueuedMessage } from '../../hooks/useMessageQueue';
+import type { QueuedMessage } from './types';
 
 const MESSAGE_QUEUE_PREVIEW_LIMIT = 120;
 
