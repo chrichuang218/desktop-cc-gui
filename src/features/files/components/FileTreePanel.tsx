@@ -534,7 +534,7 @@ function buildTree(
     const labels = [start.name];
     let path = start.path;
 
-    while (true) {
+    for (;;) {
       const children = Array.from(node.children.values());
       const hasDirectFile = children.some((child) => child.type === "file");
       const directFolders = children.filter((child) => child.type === "folder");
