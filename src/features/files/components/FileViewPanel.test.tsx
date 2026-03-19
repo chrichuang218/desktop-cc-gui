@@ -783,6 +783,37 @@ describe("FileViewPanel markdown modes", () => {
     expect(screen.queryByTestId("file-structured-preview")).toBeNull();
   });
 
+  it("keeps shell-group compatibility for zsh and dotfile scripts", async () => {
+    vi.mocked(readWorkspaceFile).mockResolvedValue({
+      content: [
+        "#!/usr/bin/env zsh",
+        "",
+        "# setup env",
+        "export APP_ENV=dev",
+      ].join("\n"),
+      truncated: false,
+    });
+
+    render(
+      <FileViewPanel
+        workspaceId="ws-shell-2"
+        workspacePath="/repo"
+        filePath=".envrc"
+        openTargets={[]}
+        openAppIconById={{}}
+        selectedOpenAppId=""
+        onSelectOpenAppId={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    await screen.findByTestId("mock-codemirror");
+    fireEvent.click(screen.getByRole("button", { name: /preview/i }));
+    await screen.findByTestId("file-structured-preview");
+    expect(screen.getByText("setup env")).toBeTruthy();
+    expect(screen.getByText("Commands")).toBeTruthy();
+  });
+
   it("opens Dockerfile in edit mode by default", async () => {
     vi.mocked(readWorkspaceFile).mockResolvedValue({
       content: [
