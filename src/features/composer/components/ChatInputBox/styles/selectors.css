@@ -43,6 +43,13 @@
   border-radius: 50%;
 }
 
+.selector-button.selector-provider-button {
+  width: 28px;
+  padding: 0;
+  justify-content: center;
+  border-radius: 50%;
+}
+
 /* Responsive text hiding for selector buttons */
 .selector-button-text {
   white-space: nowrap;
