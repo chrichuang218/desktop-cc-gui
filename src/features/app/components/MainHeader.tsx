@@ -3,6 +3,8 @@ import { useTranslation } from "react-i18next";
 import Check from "lucide-react/dist/esm/icons/check";
 import Copy from "lucide-react/dist/esm/icons/copy";
 import Folder from "lucide-react/dist/esm/icons/folder";
+import GitBranch from "lucide-react/dist/esm/icons/git-branch";
+import Search from "lucide-react/dist/esm/icons/search";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { BranchInfo, OpenAppTarget, WorkspaceInfo } from "../../../types";
 import type { ReactNode } from "react";
@@ -282,41 +284,51 @@ export function MainHeader({
                   role="menu"
                   data-tauri-drag-region="false"
                 >
-                  <div className="project-search">
+                  <label className="workspace-project-search">
+                    <span className="workspace-project-search-icon" aria-hidden>
+                      <Search size={14} />
+                    </span>
                     <input
                       value={projectQuery}
                       onChange={(event) => setProjectQuery(event.target.value)}
                       placeholder={t("workspace.searchProjects")}
-                      className="branch-input"
+                      className="workspace-project-search-input"
                       autoFocus
                       data-tauri-drag-region="false"
                       aria-label={t("workspace.searchProjects")}
                     />
-                  </div>
-                  <div className="project-list" role="none">
+                  </label>
+                  <div className="workspace-project-list" role="none">
                     {filteredGroups.map((group) => (
-                      <div key={group.id ?? "ungrouped"}>
+                      <div key={group.id ?? "ungrouped"} className="workspace-project-group">
                         {group.name && (
-                          <div className="project-group-label">{group.name}</div>
+                          <div className="workspace-project-group-label">{group.name}</div>
                         )}
                         {group.workspaces.map((ws) => (
                           <button
                             key={ws.id}
                             type="button"
-                            className={`project-item${
+                            className={`workspace-project-item${
+                              ws.kind === "worktree" ? " is-worktree" : ""
+                            }${
                               ws.id === activeWorkspaceId ? " is-active" : ""
                             }`}
                             onClick={() => handleSelectProject(ws.id)}
                             role="menuitem"
                             data-tauri-drag-region="false"
                           >
-                            {ws.name}
+                            <span className="workspace-project-item-icon" aria-hidden>
+                              {ws.kind === "worktree" ? <GitBranch size={14} /> : <Folder size={14} />}
+                            </span>
+                            <span className="workspace-project-item-label">
+                              {ws.kind === "worktree" ? (ws.worktree?.branch ?? ws.name) : ws.name}
+                            </span>
                           </button>
                         ))}
                       </div>
                     ))}
                     {filteredGroups.length === 0 && (
-                      <div className="project-empty">
+                      <div className="workspace-project-empty">
                         {t("workspace.noProjectsFound")}
                       </div>
                     )}
