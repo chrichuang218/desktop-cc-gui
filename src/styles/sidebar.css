@@ -100,6 +100,11 @@
   display: none;
 }
 
+.sidebar-topbar-content .main-header-session-tabs-slot,
+.sidebar-topbar-content .topbar-session-tabs {
+  display: none;
+}
+
 .sidebar-topbar-content .main-header {
   justify-content: flex-end;
 }

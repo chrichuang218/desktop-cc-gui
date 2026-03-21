@@ -2068,6 +2068,7 @@ const zhPart1 = {
     newName: "新名称",
     copyThread: "复制对话",
     untitledThread: "未命名对话",
+    topbarSessionTabsAriaLabel: "顶部会话标签",
     showLess: "收起",
     more: "更多...",
     loading: "加载中...",

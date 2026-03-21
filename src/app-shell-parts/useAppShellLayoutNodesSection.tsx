@@ -142,6 +142,8 @@ export function useAppShellLayoutNodesSection(ctx: any) {
     threadListCursorByWorkspace,
     activeWorkspaceId,
     activeThreadId,
+    isPhone,
+    isTablet,
     systemProxyEnabled: appSettings.systemProxyEnabled,
     systemProxyUrl: appSettings.systemProxyUrl,
     activeItems,

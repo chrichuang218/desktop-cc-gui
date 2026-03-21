@@ -2103,6 +2103,7 @@ const enPart1 = {
     newName: "New name",
     copyThread: "Copy thread",
     untitledThread: "Untitled thread",
+    topbarSessionTabsAriaLabel: "Topbar session tabs",
     showLess: "Show less",
     more: "More...",
     loading: "Loading...",

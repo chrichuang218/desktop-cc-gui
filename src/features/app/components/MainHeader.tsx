@@ -34,6 +34,7 @@ type MainHeaderProps = {
   branches: BranchInfo[];
   onCheckoutBranch: (name: string) => Promise<void> | void;
   onCreateBranch: (name: string) => Promise<void> | void;
+  sessionTabsNode?: ReactNode;
   canCopyThread?: boolean;
   onCopyThread?: () => void | Promise<void>;
   onLockPanel?: () => void;
@@ -87,6 +88,7 @@ export function MainHeader({
   branches,
   onCheckoutBranch,
   onCreateBranch,
+  sessionTabsNode,
   canCopyThread: _canCopyThread = false,
   onCopyThread: _onCopyThread,
   onLockPanel: _onLockPanel,
@@ -286,22 +288,15 @@ export function MainHeader({
   }, []);
 
   return (
-    <header className="main-header" data-tauri-drag-region>
+    <header
+      className={`main-header${sessionTabsNode ? " has-session-tabs" : ""}`}
+      data-tauri-drag-region
+    >
       <div className="workspace-header">
         <div
           className={`workspace-title-line${
             showProjectMenu ? " has-project-menu" : ""
           }${isProjectDetailVisible ? " is-project-detail-visible" : ""}`}
-          onMouseEnter={() => {
-            if (showProjectMenu) {
-              showProjectDetails();
-            }
-          }}
-          onMouseLeave={() => {
-            if (showProjectMenu) {
-              scheduleHideProjectDetails();
-            }
-          }}
           onFocusCapture={() => {
             if (showProjectMenu) {
               showProjectDetails();
@@ -416,8 +411,6 @@ export function MainHeader({
             <div
               className="workspace-branch-static-row"
               ref={infoRef}
-              onMouseEnter={showProjectDetails}
-              onMouseLeave={scheduleHideProjectDetails}
               onFocusCapture={showProjectDetails}
               onBlurCapture={handleProjectScopeBlur}
             >
@@ -565,8 +558,6 @@ export function MainHeader({
             <div
               className="workspace-branch-menu"
               ref={menuRef}
-              onMouseEnter={showProjectDetails}
-              onMouseLeave={scheduleHideProjectDetails}
               onFocusCapture={showProjectDetails}
               onBlurCapture={handleProjectScopeBlur}
             >
@@ -715,6 +706,9 @@ export function MainHeader({
           )}
         </div>
       </div>
+      {sessionTabsNode ? (
+        <div className="main-header-session-tabs-slot">{sessionTabsNode}</div>
+      ) : null}
       <div className="main-header-actions">
         {onRunLaunchScript &&
           onOpenLaunchScriptEditor &&

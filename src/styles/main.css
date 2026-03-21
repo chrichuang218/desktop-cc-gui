@@ -95,6 +95,22 @@ body[data-panel-resizing="true"] .main {
   flex: 1;
 }
 
+.main-header.has-session-tabs {
+  gap: 10px;
+}
+
+.main-header.has-session-tabs .workspace-header {
+  flex: 0 1 auto;
+  max-width: min(34vw, 460px);
+}
+
+.main-header-session-tabs-slot {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
 .main-header-actions {
   display: flex;
   align-items: center;
@@ -605,6 +621,103 @@ body[data-panel-resizing="true"] .main {
   gap: 12px;
   min-width: 0;
   flex: 1;
+}
+
+.topbar-session-tabs {
+  display: inline-flex;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  -webkit-app-region: no-drag;
+}
+
+.topbar-session-tab {
+  height: 28px;
+  min-width: 0;
+  max-width: 152px;
+  border: 0;
+  border-right: 1px solid var(--border-muted);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 0 6px 0 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-start;
+  cursor: pointer;
+  flex: 0 1 auto;
+  -webkit-app-region: no-drag;
+}
+
+.topbar-session-tab:last-child {
+  border-right: 0;
+}
+
+.topbar-session-tab:hover {
+  color: var(--text-stronger);
+  background: var(--surface-control-hover);
+}
+
+.topbar-session-tab.is-active {
+  background: rgba(37, 99, 235, 0.22);
+  background: color-mix(in srgb, var(--accent-primary, #2563eb) 22%, transparent);
+  color: var(--text-stronger);
+}
+
+.topbar-session-tab-engine {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: inherit;
+}
+
+.topbar-session-tab-label {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.topbar-session-tab-close {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  width: 16px;
+  height: 16px;
+  border-radius: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+  line-height: 1;
+  font-size: 12px;
+  -webkit-app-region: no-drag;
+}
+
+.topbar-session-tab-close:hover {
+  background: var(--surface-control-hover);
+  background: color-mix(in srgb, var(--surface-control-hover) 72%, transparent);
+}
+
+@media (max-width: 1279px) {
+  .topbar-session-tab {
+    max-width: 124px;
+  }
+}
+
+@media (max-width: 1023px) {
+  .topbar-session-tab {
+    max-width: 98px;
+  }
 }
 
 .main-topbar-left .icon-button {
