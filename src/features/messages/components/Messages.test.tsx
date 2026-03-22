@@ -656,7 +656,7 @@ describe("Messages", () => {
     expect(screen.getByText("Proceed with profile?")).toBeTruthy();
   });
 
-  it("keeps user-input request inline disabled for non-codex engines", () => {
+  it("keeps user-input request inline disabled for non-codex/non-claude engines", () => {
     const request: RequestUserInputRequest = {
       workspace_id: "ws-state",
       request_id: 9,
@@ -668,7 +668,43 @@ describe("Messages", () => {
           {
             id: "q9",
             header: "Confirm",
-            question: "Should stay hidden on non-codex",
+            question: "Should stay hidden on opencode",
+            options: [{ label: "Yes", description: "Continue." }],
+          },
+        ],
+      },
+    };
+
+    render(
+      <Messages
+        items={[]}
+        threadId="thread-from-state"
+        workspaceId="ws-state"
+        isThinking={false}
+        userInputRequests={[request]}
+        onUserInputSubmit={vi.fn()}
+        activeEngine="opencode"
+        openTargets={[]}
+        selectedOpenAppId=""
+      />,
+    );
+
+    expect(screen.queryByText("Should stay hidden on opencode")).toBeNull();
+  });
+
+  it("renders user-input request inline for claude engine", () => {
+    const request: RequestUserInputRequest = {
+      workspace_id: "ws-state",
+      request_id: 10,
+      params: {
+        thread_id: "thread-from-state",
+        turn_id: "turn-10",
+        item_id: "item-10",
+        questions: [
+          {
+            id: "q10",
+            header: "Confirm",
+            question: "Should render on claude",
             options: [{ label: "Yes", description: "Continue." }],
           },
         ],
@@ -689,7 +725,7 @@ describe("Messages", () => {
       />,
     );
 
-    expect(screen.queryByText("Should stay hidden on non-codex")).toBeNull();
+    expect(screen.getByText("Should render on claude")).toBeTruthy();
   });
 
   it("applies codex markdown visual style through presentation profile", () => {

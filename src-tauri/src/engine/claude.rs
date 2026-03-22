@@ -66,8 +66,8 @@ pub struct ClaudeSession {
     last_emitted_text: StdMutex<String>,
     /// Stdin handles per turn for AskUserQuestion responses
     stdin_by_turn: Mutex<HashMap<String, ChildStdin>>,
-    /// Pending AskUserQuestion requests: request_id_hash -> turn_id
-    pending_user_inputs: StdMutex<HashMap<i64, String>>,
+    /// Pending AskUserQuestion requests: request_id -> turn_id
+    pending_user_inputs: StdMutex<HashMap<String, String>>,
     /// Signal to resume stdout processing after user responds to AskUserQuestion
     user_input_notify: Arc<Notify>,
     /// Stores user's formatted AskUserQuestion answer for the kill+resume mechanism
@@ -729,7 +729,7 @@ impl ClaudeSession {
                                     if tool_name == "AskUserQuestion" {
                                         if let Some(ref input_val) = input {
                                             return self.convert_ask_user_question_to_request(
-                                                &tool_id, input_val,
+                                                &tool_id, input_val, turn_id,
                                             );
                                         }
                                     }
@@ -918,7 +918,9 @@ impl ClaudeSession {
                 // Intercept AskUserQuestion tool to emit a RequestUserInput event
                 if tool_name == "AskUserQuestion" {
                     if let Some(ref input_val) = input {
-                        return self.convert_ask_user_question_to_request(&tool_id, input_val);
+                        return self.convert_ask_user_question_to_request(
+                            &tool_id, input_val, turn_id,
+                        );
                     }
                 }
 
@@ -1471,12 +1473,18 @@ impl ClaudeSession {
         &self,
         tool_id: &str,
         input: &Value,
+        turn_id: &str,
     ) -> Option<EngineEvent> {
         let raw_questions = input.get("questions").and_then(|q| q.as_array())?;
         let mut questions = Vec::new();
         for (idx, raw_q) in raw_questions.iter().enumerate() {
             let question_text = raw_q.get("question").and_then(|v| v.as_str()).unwrap_or("");
             let header = raw_q.get("header").and_then(|v| v.as_str()).unwrap_or("");
+            let multi_select = raw_q
+                .get("multiSelect")
+                .or_else(|| raw_q.get("multi_select"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             // AskUserQuestion always allows a free-text "Other" option
             let is_other = true;
             let raw_options = raw_q
@@ -1505,6 +1513,7 @@ impl ClaudeSession {
                 "question": question_text,
                 "isOther": is_other,
                 "isSecret": false,
+                "multiSelect": multi_select,
                 "options": if options.is_empty() { Value::Null } else { Value::Array(options) },
             }));
         }
@@ -1513,20 +1522,60 @@ impl ClaudeSession {
             return None;
         }
 
-        // Use a numeric request_id derived from the tool_id via DefaultHasher
-        // for better distribution and lower collision probability.
+        // Use a string request_id derived from the tool_id via DefaultHasher.
+        // A numeric i64 can lose precision when transported through JS.
         use std::hash::{Hash, Hasher};
-        let request_id: i64 = {
+        let request_id = {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             tool_id.hash(&mut hasher);
-            (hasher.finish() as i64).abs()
+            format!("ask-{:016x}", hasher.finish())
         };
+
+        if let Ok(mut pending) = self.pending_user_inputs.lock() {
+            pending.insert(request_id.clone(), turn_id.to_string());
+        }
 
         Some(EngineEvent::RequestUserInput {
             workspace_id: self.workspace_id.clone(),
-            request_id: json!(request_id),
+            request_id: Value::String(request_id),
             questions: Value::Array(questions),
         })
+    }
+
+    fn normalize_request_id_key(request_id: &Value) -> Option<String> {
+        if let Some(text) = request_id.as_str() {
+            let normalized = text.trim();
+            if !normalized.is_empty() {
+                return Some(normalized.to_string());
+            }
+        }
+        if let Some(value) = request_id.as_i64() {
+            return Some(value.to_string());
+        }
+        if let Some(value) = request_id.as_u64() {
+            return Some(value.to_string());
+        }
+        None
+    }
+
+    pub fn has_pending_user_input(&self, request_id: &Value) -> bool {
+        let request_id_key = match Self::normalize_request_id_key(request_id) {
+            Some(value) => value,
+            None => return false,
+        };
+        self.pending_user_inputs
+            .lock()
+            .ok()
+            .map(|pending| pending.contains_key(&request_id_key))
+            .unwrap_or(false)
+    }
+
+    pub fn has_any_pending_user_input(&self) -> bool {
+        self.pending_user_inputs
+            .lock()
+            .ok()
+            .map(|pending| !pending.is_empty())
+            .unwrap_or(false)
     }
 
     /// Handle the AskUserQuestion flow: wait for user response, then kill the
@@ -1648,18 +1697,45 @@ impl ClaudeSession {
         request_id: Value,
         result: Value,
     ) -> Result<(), String> {
-        let request_id_num = request_id.as_i64().unwrap_or(0);
-
-        // Remove from pending tracking
-        if let Ok(mut pending) = self.pending_user_inputs.lock() {
-            pending.remove(&request_id_num);
+        let normalized_request_id = Self::normalize_request_id_key(&request_id);
+        if normalized_request_id.is_none() && !self.has_any_pending_user_input() {
+            return Err("invalid request_id for AskUserQuestion".to_string());
         }
+
+        // Remove from pending tracking. If the provided request_id does not match but
+        // exactly one AskUserQuestion is pending, fall back to that request key.
+        let mut resolved_request_id = normalized_request_id.clone();
+        if let Ok(mut pending) = self.pending_user_inputs.lock() {
+            if let Some(request_id_key) = normalized_request_id.as_ref() {
+                if pending.remove(request_id_key).is_some() {
+                    resolved_request_id = Some(request_id_key.clone());
+                } else {
+                    resolved_request_id = None;
+                }
+            } else {
+                resolved_request_id = None;
+            }
+
+            if resolved_request_id.is_none() && pending.len() == 1 {
+                if let Some(fallback_request_id) = pending.keys().next().cloned() {
+                    log::warn!(
+                        "Claude engine: request_id mismatch for AskUserQuestion response; using fallback pending request_id={}",
+                        fallback_request_id
+                    );
+                    pending.remove(&fallback_request_id);
+                    resolved_request_id = Some(fallback_request_id);
+                }
+            }
+        }
+        let request_id_key = resolved_request_id
+            .or(normalized_request_id)
+            .unwrap_or_else(|| "<unknown>".to_string());
 
         // Format the answer and store it for the stdout loop to pick up
         let answer_text = format_ask_user_answer(&result);
         log::info!(
             "Claude engine: AskUserQuestion response (request_id={}): {}",
-            request_id_num,
+            request_id_key,
             answer_text
         );
         if let Ok(mut slot) = self.user_input_answer.lock() {
@@ -2092,6 +2168,136 @@ mod tests {
         );
 
         assert_eq!(session.workspace_id, "test-workspace");
+    }
+
+    #[tokio::test]
+    async fn ask_user_question_registers_and_clears_pending_request() {
+        let session = ClaudeSession::new(
+            "test-workspace".to_string(),
+            PathBuf::from("/tmp/test"),
+            None,
+        );
+        let input = json!({
+            "questions": [
+                {
+                    "header": "确认",
+                    "question": "继续吗？",
+                    "options": [{ "label": "继续", "description": "继续执行" }]
+                }
+            ]
+        });
+
+        let event = session
+            .convert_ask_user_question_to_request("tool-ask-1", &input, "turn-1")
+            .expect("request user input event");
+
+        let request_id = match event {
+            EngineEvent::RequestUserInput { request_id, .. } => request_id,
+            other => panic!("unexpected event: {:?}", other),
+        };
+
+        assert!(session.has_pending_user_input(&request_id));
+
+        let result = json!({
+            "answers": {
+                "q-0": {
+                    "answers": ["继续"]
+                }
+            }
+        });
+        session
+            .respond_to_user_input(request_id.clone(), result)
+            .await
+            .expect("respond success");
+
+        assert!(!session.has_pending_user_input(&request_id));
+    }
+
+    #[test]
+    fn ask_user_question_preserves_multi_select_flag() {
+        let session = ClaudeSession::new(
+            "test-workspace".to_string(),
+            PathBuf::from("/tmp/test"),
+            None,
+        );
+        let input = json!({
+            "questions": [
+                {
+                    "header": "关注点",
+                    "question": "可多选",
+                    "multiSelect": true,
+                    "options": [{ "label": "性能", "description": "" }]
+                }
+            ]
+        });
+
+        let event = session
+            .convert_ask_user_question_to_request("tool-ask-multi", &input, "turn-1")
+            .expect("request user input event");
+
+        let questions = match event {
+            EngineEvent::RequestUserInput { questions, .. } => questions,
+            other => panic!("unexpected event: {:?}", other),
+        };
+        let question = questions
+            .as_array()
+            .and_then(|arr| arr.first())
+            .expect("first question");
+        assert_eq!(question["multiSelect"], json!(true));
+    }
+
+    #[test]
+    fn has_pending_user_input_accepts_numeric_id_for_backward_compat() {
+        let session = ClaudeSession::new(
+            "test-workspace".to_string(),
+            PathBuf::from("/tmp/test"),
+            None,
+        );
+        if let Ok(mut pending) = session.pending_user_inputs.lock() {
+            pending.insert("42".to_string(), "turn-42".to_string());
+        }
+        assert!(session.has_pending_user_input(&json!(42)));
+        assert!(session.has_pending_user_input(&json!("42")));
+    }
+
+    #[test]
+    fn has_any_pending_user_input_reports_presence() {
+        let session = ClaudeSession::new(
+            "test-workspace".to_string(),
+            PathBuf::from("/tmp/test"),
+            None,
+        );
+        assert!(!session.has_any_pending_user_input());
+        if let Ok(mut pending) = session.pending_user_inputs.lock() {
+            pending.insert("ask-1".to_string(), "turn-1".to_string());
+        }
+        assert!(session.has_any_pending_user_input());
+    }
+
+    #[tokio::test]
+    async fn respond_to_user_input_falls_back_to_single_pending_request() {
+        let session = ClaudeSession::new(
+            "test-workspace".to_string(),
+            PathBuf::from("/tmp/test"),
+            None,
+        );
+        if let Ok(mut pending) = session.pending_user_inputs.lock() {
+            pending.insert("ask-fallback".to_string(), "turn-1".to_string());
+        }
+
+        let result = json!({
+            "answers": {
+                "q-0": {
+                    "answers": ["继续"]
+                }
+            }
+        });
+        session
+            .respond_to_user_input(json!(999), result)
+            .await
+            .expect("fallback respond success");
+
+        assert!(!session.has_any_pending_user_input());
     }
 
     #[test]
