@@ -1582,6 +1582,7 @@ const enPart2 = {
       clear: "Clear current session",
       new: "Create a new session",
       status: "Show current session status",
+      context: "Show current context usage",
       resume: "Refresh current session",
       review: "Start code review",
       fast: "Toggle Codex fast mode",

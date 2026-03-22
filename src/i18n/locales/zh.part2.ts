@@ -1554,6 +1554,7 @@ const zhPart2 = {
       clear: "清空当前会话",
       new: "创建一个新会话",
       status: "显示当前会话状态",
+      context: "显示当前上下文使用情况",
       resume: "刷新当前会话",
       review: "开始代码审查",
       fast: "切换 Codex Fast 模式",
