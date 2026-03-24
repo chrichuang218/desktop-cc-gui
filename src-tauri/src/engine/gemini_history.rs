@@ -418,6 +418,20 @@ fn parse_summary_from_value(path: &Path, value: &Value) -> Option<GeminiSessionS
 }
 
 fn parse_messages_from_value(value: &Value) -> GeminiSessionLoadResult {
+    #[derive(Debug)]
+    struct TimelineEntry {
+        sort_index: usize,
+        timestamp_millis: Option<i64>,
+        message: GeminiSessionMessage,
+    }
+
+    fn resolve_timestamp_text(raw: Option<&Value>) -> Option<String> {
+        raw.and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(|text| text.to_string())
+    }
+
     let mut messages: Vec<GeminiSessionMessage> = Vec::new();
     let mut usage: Option<GeminiSessionUsage> = None;
     let mut counter = 0usize;
@@ -478,6 +492,27 @@ fn parse_messages_from_value(value: &Value) -> GeminiSessionLoadResult {
                 });
             }
             "gemini" | "assistant" | "model" => {
+                let base_timestamp_millis = timestamp
+                    .as_deref()
+                    .and_then(parse_timestamp_millis);
+                let mut timeline_entries: Vec<TimelineEntry> = Vec::new();
+                let mut timeline_sort_index = 0usize;
+                let mut push_timeline_message =
+                    |mut message: GeminiSessionMessage, timestamp_override: Option<String>| {
+                        let resolved_timestamp = timestamp_override.or_else(|| timestamp.clone());
+                        let resolved_timestamp_millis = resolved_timestamp
+                            .as_deref()
+                            .and_then(parse_timestamp_millis)
+                            .or(base_timestamp_millis);
+                        message.timestamp = resolved_timestamp;
+                        timeline_entries.push(TimelineEntry {
+                            sort_index: timeline_sort_index,
+                            timestamp_millis: resolved_timestamp_millis,
+                            message,
+                        });
+                        timeline_sort_index += 1;
+                    };
+
                 if let Some(thoughts) = raw.get("thoughts").and_then(|v| v.as_array()) {
                     for thought in thoughts {
                         let subject = thought
@@ -496,18 +531,27 @@ fn parse_messages_from_value(value: &Value) -> GeminiSessionLoadResult {
                             (None, Some(desc)) => desc.to_string(),
                             (None, None) => continue,
                         };
+                        let thought_timestamp = resolve_timestamp_text(
+                            thought
+                                .get("timestamp")
+                                .or_else(|| thought.get("createdAt"))
+                                .or_else(|| thought.get("updatedAt")),
+                        );
                         counter += 1;
-                        messages.push(GeminiSessionMessage {
+                        push_timeline_message(
+                            GeminiSessionMessage {
                             id: format!("{}-reasoning-{}", base_id, counter),
                             role: "assistant".to_string(),
                             text,
-                            timestamp: timestamp.clone(),
+                            timestamp: None,
                             kind: "reasoning".to_string(),
                             tool_type: None,
                             title: None,
                             tool_input: None,
                             tool_output: None,
-                        });
+                        },
+                            thought_timestamp,
+                        );
                     }
                 }
 
@@ -533,17 +577,25 @@ fn parse_messages_from_value(value: &Value) -> GeminiSessionLoadResult {
                             .as_ref()
                             .and_then(|v| serde_json::to_string_pretty(v).ok())
                             .unwrap_or_default();
-                        messages.push(GeminiSessionMessage {
+                        let tool_start_timestamp = resolve_timestamp_text(
+                            call.get("timestamp")
+                                .or_else(|| call.get("startedAt"))
+                                .or_else(|| call.get("createdAt")),
+                        );
+                        push_timeline_message(
+                            GeminiSessionMessage {
                             id: tool_use_id.clone(),
                             role: "assistant".to_string(),
                             text: input_text,
-                            timestamp: timestamp.clone(),
+                            timestamp: None,
                             kind: "tool".to_string(),
                             tool_type: Some(tool_name.clone()),
                             title: Some(tool_name),
                             tool_input: input_value,
                             tool_output: None,
-                        });
+                        },
+                            tool_start_timestamp,
+                        );
 
                         let output_preview = call
                             .get("resultDisplay")
@@ -557,11 +609,17 @@ fn parse_messages_from_value(value: &Value) -> GeminiSessionLoadResult {
                             });
                         if let Some(output) = output_preview {
                             let is_error = tool_call_is_error(call, Some(output.as_str()));
-                            messages.push(GeminiSessionMessage {
+                            let tool_result_timestamp = resolve_timestamp_text(
+                                call.get("endedAt")
+                                    .or_else(|| call.get("timestamp"))
+                                    .or_else(|| call.get("updatedAt")),
+                            );
+                            push_timeline_message(
+                                GeminiSessionMessage {
                                 id: format!("{}-result", tool_use_id),
                                 role: "assistant".to_string(),
                                 text: output,
-                                timestamp: timestamp.clone(),
+                                timestamp: None,
                                 kind: "tool".to_string(),
                                 tool_type: Some(if is_error {
                                     "error".to_string()
@@ -575,26 +633,43 @@ fn parse_messages_from_value(value: &Value) -> GeminiSessionLoadResult {
                                 }),
                                 tool_input: None,
                                 tool_output: call.get("result").cloned(),
-                            });
+                            },
+                                tool_result_timestamp,
+                            );
                         }
                     }
                 }
 
                 if let Some(text) = extract_message_text(&raw) {
                     if !text.trim().is_empty() {
-                        messages.push(GeminiSessionMessage {
+                        push_timeline_message(
+                            GeminiSessionMessage {
                             id: base_id.clone(),
                             role: "assistant".to_string(),
                             text,
-                            timestamp: timestamp.clone(),
+                            timestamp: None,
                             kind: "message".to_string(),
                             tool_type: None,
                             title: None,
                             tool_input: None,
                             tool_output: None,
-                        });
+                        },
+                            None,
+                        );
                     }
                 }
+
+                timeline_entries.sort_by(|left, right| {
+                    match (left.timestamp_millis, right.timestamp_millis) {
+                        (Some(left_ts), Some(right_ts)) => left_ts
+                            .cmp(&right_ts)
+                            .then(left.sort_index.cmp(&right.sort_index)),
+                        (Some(_), None) => std::cmp::Ordering::Less,
+                        (None, Some(_)) => std::cmp::Ordering::Greater,
+                        (None, None) => left.sort_index.cmp(&right.sort_index),
+                    }
+                });
+                messages.extend(timeline_entries.into_iter().map(|entry| entry.message));
 
                 if let Some(extracted_usage) = extract_usage(&raw) {
                     usage = Some(extracted_usage);
@@ -730,4 +805,102 @@ pub async fn delete_gemini_session(
         "[SESSION_NOT_FOUND] Gemini session file not found: {}",
         normalized_session_id
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_messages_from_value;
+    use serde_json::json;
+
+    #[test]
+    fn parse_messages_orders_assistant_timeline_by_timestamp() {
+        let value = json!({
+            "messages": [
+                {
+                    "type": "gemini",
+                    "id": "assistant-1",
+                    "timestamp": "2026-03-24T05:28:35.530Z",
+                    "thoughts": [
+                        {
+                            "subject": "第二阶段",
+                            "description": "补充计划",
+                            "timestamp": "2026-03-24T05:28:33.567Z"
+                        },
+                        {
+                            "subject": "第一阶段",
+                            "description": "先分析约束",
+                            "timestamp": "2026-03-24T05:28:32.384Z"
+                        }
+                    ],
+                    "toolCalls": [
+                        {
+                            "id": "tool-1",
+                            "displayName": "ReadFile",
+                            "timestamp": "2026-03-24T05:28:34.100Z",
+                            "args": {
+                                "path": "README.md"
+                            },
+                            "resultDisplay": "ok"
+                        }
+                    ],
+                    "content": "最终答复"
+                }
+            ]
+        });
+
+        let parsed = parse_messages_from_value(&value);
+        let entries = parsed.messages;
+        assert_eq!(entries.len(), 5);
+
+        assert_eq!(entries[0].kind, "reasoning");
+        assert!(entries[0].text.contains("第一阶段"));
+        assert_eq!(entries[1].kind, "reasoning");
+        assert!(entries[1].text.contains("第二阶段"));
+        assert_eq!(entries[2].kind, "tool");
+        assert_eq!(entries[2].id, "tool-1");
+        assert_eq!(entries[3].kind, "tool");
+        assert_eq!(entries[3].id, "tool-1-result");
+        assert_eq!(entries[4].kind, "message");
+        assert_eq!(entries[4].text, "最终答复");
+    }
+
+    #[test]
+    fn parse_messages_keeps_fallback_stage_order_without_timestamps() {
+        let value = json!({
+            "messages": [
+                {
+                    "type": "gemini",
+                    "id": "assistant-1",
+                    "thoughts": [
+                        {
+                            "subject": "先思考",
+                            "description": "没有时间戳"
+                        }
+                    ],
+                    "toolCalls": [
+                        {
+                            "id": "tool-1",
+                            "displayName": "ReadFile",
+                            "args": {
+                                "path": "README.md"
+                            },
+                            "resultDisplay": "ok"
+                        }
+                    ],
+                    "content": "最终答复"
+                }
+            ]
+        });
+
+        let parsed = parse_messages_from_value(&value);
+        let entries = parsed.messages;
+        assert_eq!(entries.len(), 4);
+        assert_eq!(entries[0].kind, "reasoning");
+        assert_eq!(entries[1].kind, "tool");
+        assert_eq!(entries[1].id, "tool-1");
+        assert_eq!(entries[2].kind, "tool");
+        assert_eq!(entries[2].id, "tool-1-result");
+        assert_eq!(entries[3].kind, "message");
+        assert_eq!(entries[3].text, "最终答复");
+    }
 }

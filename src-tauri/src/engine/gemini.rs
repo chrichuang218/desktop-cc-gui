@@ -235,6 +235,21 @@ impl GeminiSession {
         }
     }
 
+    fn resolve_approval_mode(access_mode: Option<&str>) -> Option<&'static str> {
+        let normalized = access_mode
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        match normalized {
+            Some("full-access") => Some("yolo"),
+            Some("read-only") => Some("plan"),
+            Some("default") => Some("default"),
+            // "current" should respect Gemini CLI's own active/default policy.
+            Some("current") | None => None,
+            // Keep compatibility for unknown/legacy values.
+            Some(_) => Some("auto_edit"),
+        }
+    }
+
     fn load_vendor_runtime_config() -> GeminiVendorRuntimeConfig {
         let mut result = GeminiVendorRuntimeConfig::default();
         let Some(home) = dirs::home_dir() else {
@@ -316,23 +331,9 @@ impl GeminiSession {
             cmd.arg(model);
         }
 
-        match params.access_mode.as_deref() {
-            Some("full-access") => {
-                cmd.arg("--approval-mode");
-                cmd.arg("yolo");
-            }
-            Some("read-only") => {
-                cmd.arg("--approval-mode");
-                cmd.arg("plan");
-            }
-            Some("default") => {
-                cmd.arg("--approval-mode");
-                cmd.arg("default");
-            }
-            _ => {
-                cmd.arg("--approval-mode");
-                cmd.arg("auto_edit");
-            }
+        if let Some(approval_mode) = Self::resolve_approval_mode(params.access_mode.as_deref()) {
+            cmd.arg("--approval-mode");
+            cmd.arg(approval_mode);
         }
 
         if params.continue_session {
@@ -455,6 +456,7 @@ impl GeminiSession {
         let mut session_started_emitted = false;
         let mut new_session_id: Option<String> = None;
         let mut observed_event_types = BTreeSet::new();
+        let mut last_reasoning_snapshot = String::new();
 
         let reader = BufReader::new(stdout);
         let mut lines = reader.lines();
@@ -483,7 +485,25 @@ impl GeminiSession {
                             );
                         }
                     }
-                    if let Some(unified_event) = parse_gemini_event(&self.workspace_id, &event) {
+                    let parsed_event = parse_gemini_event(&self.workspace_id, &event);
+                    let parsed_is_reasoning = parsed_event
+                        .as_ref()
+                        .is_some_and(|entry| matches!(entry, EngineEvent::ReasoningDelta { .. }));
+                    if !parsed_is_reasoning {
+                        if let Some(thought_text) = extract_latest_thought_text(&event) {
+                            if thought_text != last_reasoning_snapshot {
+                                last_reasoning_snapshot = thought_text.clone();
+                                self.emit_turn_event(
+                                    turn_id,
+                                    EngineEvent::ReasoningDelta {
+                                        workspace_id: self.workspace_id.clone(),
+                                        text: thought_text,
+                                    },
+                                );
+                            }
+                        }
+                    }
+                    if let Some(unified_event) = parsed_event {
                         match &unified_event {
                             EngineEvent::TextDelta { text, .. } => {
                                 response_text.push_str(text);
@@ -706,6 +726,73 @@ fn extract_result_error_message(event: &Value) -> Option<String> {
         .map(|value| value.to_string())
 }
 
+fn extract_latest_thought_text(event: &Value) -> Option<String> {
+    let thoughts = event.get("thoughts")?.as_array()?;
+    thoughts.iter().rev().find_map(|thought| {
+        let subject = thought
+            .get("subject")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let description = thought
+            .get("description")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        match (subject, description) {
+            (Some(sub), Some(desc)) => Some(format!("{}: {}", sub, desc)),
+            (Some(sub), None) => Some(sub.to_string()),
+            (None, Some(desc)) => Some(desc.to_string()),
+            (None, None) => None,
+        }
+    })
+}
+
+fn parse_completion_event(workspace_id: &str, event: &Value) -> Option<EngineEvent> {
+    let status = event
+        .get("status")
+        .and_then(|value| value.as_str())
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty());
+    let is_error_status = status
+        .as_deref()
+        .is_some_and(|value| matches!(value, "error" | "failed" | "cancelled" | "canceled"));
+    let has_error_payload = event.get("error").is_some_and(|value| !value.is_null());
+    if is_error_status || has_error_payload {
+        let message = extract_result_error_message(event).unwrap_or_else(|| {
+            if let Some(value) = status.as_deref() {
+                format!("Gemini result status: {}", value)
+            } else {
+                "Gemini returned an error result.".to_string()
+            }
+        });
+        return Some(EngineEvent::TurnError {
+            workspace_id: workspace_id.to_string(),
+            error: message,
+            code: None,
+        });
+    }
+
+    let result_text = event
+        .get("text")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .or_else(|| event.get("response").and_then(|value| extract_text_from_value(value, 0)))
+        .or_else(|| event.get("result").and_then(|value| extract_text_from_value(value, 0)));
+    let result_payload = if let Some(text) = result_text {
+        Some(json!({
+            "text": text,
+            "raw": event,
+        }))
+    } else {
+        Some(event.clone())
+    };
+    Some(EngineEvent::TurnCompleted {
+        workspace_id: workspace_id.to_string(),
+        result: result_payload,
+    })
+}
+
 fn extract_event_text(event: &Value) -> Option<String> {
     first_non_empty_str(&[
         event.get("delta").and_then(|v| v.as_str()),
@@ -793,6 +880,25 @@ fn is_text_like_event_type(event_type: &str) -> bool {
             | "assistant_message"
     ) || normalized.contains("message")
         || normalized.contains("text")
+}
+
+fn is_completion_event_type(event_type: &str) -> bool {
+    let normalized = event_type.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return false;
+    }
+    matches!(
+        normalized.as_str(),
+        "result"
+            | "done"
+            | "complete"
+            | "completed"
+            | "final"
+            | "turn_completed"
+            | "turn.complete"
+            | "response_complete"
+            | "response.completed"
+    )
 }
 
 fn parse_gemini_event(workspace_id: &str, event: &Value) -> Option<EngineEvent> {
@@ -918,58 +1024,11 @@ fn parse_gemini_event(workspace_id: &str, event: &Value) -> Option<EngineEvent> 
                 code: None,
             })
         }
-        "result" => {
-            let status = event
-                .get("status")
-                .and_then(|value| value.as_str())
-                .map(|value| value.trim().to_ascii_lowercase())
-                .filter(|value| !value.is_empty());
-            let is_error_status = status
-                .as_deref()
-                .is_some_and(|value| matches!(value, "error" | "failed" | "cancelled" | "canceled"));
-            let has_error_payload = event.get("error").is_some_and(|value| !value.is_null());
-            if is_error_status || has_error_payload {
-                let message = extract_result_error_message(event).unwrap_or_else(|| {
-                    if let Some(value) = status.as_deref() {
-                        format!("Gemini result status: {}", value)
-                    } else {
-                        "Gemini returned an error result.".to_string()
-                    }
-                });
-                return Some(EngineEvent::TurnError {
-                    workspace_id: workspace_id.to_string(),
-                    error: message,
-                    code: None,
-                });
-            }
-            let result_text = event
-                .get("text")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-                .or_else(|| {
-                    event
-                        .get("response")
-                        .and_then(|value| extract_text_from_value(value, 0))
-                })
-                .or_else(|| {
-                    event
-                        .get("result")
-                        .and_then(|value| extract_text_from_value(value, 0))
-                });
-            let result_payload = if let Some(text) = result_text {
-                Some(json!({
-                    "text": text,
-                    "raw": event,
-                }))
-            } else {
-                Some(event.clone())
-            };
-            Some(EngineEvent::TurnCompleted {
-                workspace_id: workspace_id.to_string(),
-                result: result_payload,
-            })
-        }
+        "result" => parse_completion_event(workspace_id, event),
         _ => {
+            if is_completion_event_type(event_type) {
+                return parse_completion_event(workspace_id, event);
+            }
             if is_reasoning_event_type(event_type) {
                 let text = extract_event_text(event)?;
                 return Some(EngineEvent::ReasoningDelta {
@@ -991,7 +1050,7 @@ fn parse_gemini_event(workspace_id: &str, event: &Value) -> Option<EngineEvent> 
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_gemini_event, GeminiSession};
+    use super::{extract_latest_thought_text, parse_gemini_event, GeminiSession};
     use serde_json::json;
     use super::EngineEvent;
 
@@ -1108,5 +1167,47 @@ mod tests {
             }
             _ => panic!("expected TextDelta"),
         }
+    }
+
+    #[test]
+    fn parse_done_alias_maps_to_turn_completed() {
+        let payload = json!({
+            "type": "done",
+            "status": "success",
+            "text": "完成"
+        });
+        let parsed = parse_gemini_event("workspace-1", &payload);
+        assert!(matches!(parsed, Some(EngineEvent::TurnCompleted { .. })));
+    }
+
+    #[test]
+    fn extract_latest_thought_text_prefers_latest_non_empty_entry() {
+        let payload = json!({
+            "thoughts": [
+                {
+                    "subject": "先检查上下文",
+                    "description": "确认用户意图"
+                },
+                {
+                    "subject": "再输出答案",
+                    "description": "整理最终结论"
+                }
+            ]
+        });
+        let extracted = extract_latest_thought_text(&payload);
+        assert_eq!(extracted.as_deref(), Some("再输出答案: 整理最终结论"));
+    }
+
+    #[test]
+    fn approval_mode_current_uses_cli_default() {
+        assert_eq!(GeminiSession::resolve_approval_mode(Some("current")), None);
+    }
+
+    #[test]
+    fn approval_mode_full_access_maps_to_yolo() {
+        assert_eq!(
+            GeminiSession::resolve_approval_mode(Some("full-access")),
+            Some("yolo")
+        );
     }
 }

@@ -164,6 +164,58 @@ describe("history loaders", () => {
     );
   });
 
+  it("merges adjacent gemini reasoning rows while preserving tool boundaries", () => {
+    const items = parseGeminiHistoryMessages([
+      {
+        id: "gemini-reasoning-1",
+        kind: "reasoning",
+        text: "先读取目录",
+      },
+      {
+        id: "gemini-reasoning-2",
+        kind: "reasoning",
+        text: "再检查配置",
+      },
+      {
+        id: "gemini-tool-1",
+        kind: "tool",
+        toolType: "commandExecution",
+        title: "Command",
+        toolInput: { command: ["ls"] },
+      },
+      {
+        id: "gemini-reasoning-3",
+        kind: "reasoning",
+        text: "整理最终结论",
+      },
+    ]);
+
+    expect(items).toHaveLength(3);
+    expect(items[0]).toEqual(
+      expect.objectContaining({
+        kind: "reasoning",
+      }),
+    );
+    if (items[0]?.kind === "reasoning") {
+      expect(items[0].content).toContain("先读取目录");
+      expect(items[0].content).toContain("再检查配置");
+    }
+    expect(items[1]).toEqual(
+      expect.objectContaining({
+        id: "gemini-tool-1",
+        kind: "tool",
+      }),
+    );
+    expect(items[2]).toEqual(
+      expect.objectContaining({
+        kind: "reasoning",
+      }),
+    );
+    if (items[2]?.kind === "reasoning") {
+      expect(items[2].content).toContain("整理最终结论");
+    }
+  });
+
   it("reconstructs codex local session history into structured activity items", () => {
     const items = parseCodexSessionHistory({
       entries: [

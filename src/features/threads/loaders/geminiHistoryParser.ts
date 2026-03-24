@@ -5,6 +5,47 @@ import { parseClaudeHistoryMessages } from "./claudeHistoryLoader";
 
 const RESULT_TOOL_SUFFIXES = ["-result", ":result", "_result", ".result", "/result"];
 
+function compactComparableReasoningText(value: string): string {
+  return value
+    .replace(/\s+/g, "")
+    .replace(/[！!]/g, "!")
+    .replace(/[？?]/g, "?")
+    .replace(/[，,]/g, ",")
+    .replace(/[。．.]/g, ".");
+}
+
+function mergeAdjacentReasoningText(existing: string, incoming: string): string {
+  const normalizedExisting = existing.trim();
+  const normalizedIncoming = incoming.trim();
+  if (!normalizedExisting) {
+    return normalizedIncoming;
+  }
+  if (!normalizedIncoming) {
+    return normalizedExisting;
+  }
+
+  const compactExisting = compactComparableReasoningText(normalizedExisting);
+  const compactIncoming = compactComparableReasoningText(normalizedIncoming);
+  if (!compactExisting) {
+    return normalizedIncoming;
+  }
+  if (!compactIncoming) {
+    return normalizedExisting;
+  }
+  if (compactExisting === compactIncoming) {
+    return normalizedExisting.length >= normalizedIncoming.length
+      ? normalizedExisting
+      : normalizedIncoming;
+  }
+  if (compactIncoming.includes(compactExisting)) {
+    return normalizedIncoming;
+  }
+  if (compactExisting.includes(compactIncoming)) {
+    return normalizedExisting;
+  }
+  return `${normalizedExisting}\n\n${normalizedIncoming}`;
+}
+
 function stringifyValue(value: unknown): string {
   if (typeof value === "string") {
     return value;
@@ -160,6 +201,19 @@ function appendReasoningItem(
 ) {
   const normalizedText = text.trim();
   if (!normalizedText) {
+    return;
+  }
+  const previous = items[items.length - 1];
+  if (previous?.kind === "reasoning") {
+    const mergedContent = mergeAdjacentReasoningText(previous.content, normalizedText);
+    const summary = previous.summary.trim()
+      ? previous.summary
+      : (mergedContent.split(/\r?\n/, 1)[0] ?? mergedContent).slice(0, 100);
+    items[items.length - 1] = {
+      ...previous,
+      summary,
+      content: mergedContent,
+    };
     return;
   }
   const firstLine = normalizedText.split(/\r?\n/, 1)[0] ?? normalizedText;

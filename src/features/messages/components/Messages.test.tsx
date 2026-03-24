@@ -2232,6 +2232,44 @@ describe("Messages", () => {
     expect(container.textContent ?? "").toContain("输出最终分析报告");
   });
 
+  it("collapses consecutive gemini reasoning runs into a single visible block", () => {
+    const items: ConversationItem[] = [
+      {
+        id: "gemini-reasoning-run-1",
+        kind: "reasoning",
+        summary: "先读取 README 并识别技术栈",
+        content: "先读取 README 并识别技术栈",
+      },
+      {
+        id: "gemini-reasoning-run-2",
+        kind: "reasoning",
+        summary: "继续读取 CLAUDE.md 并整理结论",
+        content: "继续读取 CLAUDE.md 并整理结论",
+      },
+      {
+        id: "gemini-reasoning-run-3",
+        kind: "reasoning",
+        summary: "输出最终分析报告",
+        content: "输出最终分析报告",
+      },
+    ];
+
+    const { container } = render(
+      <Messages
+        items={items}
+        threadId="gemini:thread-1"
+        workspaceId="ws-1"
+        isThinking={false}
+        activeEngine="gemini"
+        openTargets={[]}
+        selectedOpenAppId=""
+      />,
+    );
+
+    expect(container.querySelectorAll(".thinking-block").length).toBe(1);
+    expect(container.textContent ?? "").toContain("输出最终分析报告");
+  });
+
   it("keeps consecutive claude live reasoning runs segmented while streaming", () => {
     const items: ConversationItem[] = [
       {

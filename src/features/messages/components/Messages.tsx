@@ -2088,13 +2088,13 @@ export const Messages = memo(function Messages({
           : activeEngine === "codex";
         return keepTitleOnlyReasoning || item.id === latestTitleOnlyReasoningId;
       });
-    const appendReasoningRuns = activeEngine === "claude";
+    const appendReasoningRuns = activeEngine === "claude" || activeEngine === "gemini";
     const deduped = dedupeAdjacentReasoningItems(
       filtered,
       reasoningMetaById,
       appendReasoningRuns,
     );
-    const collapseReasoningRuns = activeEngine !== "codex" && activeEngine !== "gemini";
+    const collapseReasoningRuns = activeEngine !== "codex";
     return collapseConsecutiveReasoningRuns(
       deduped,
       collapseReasoningRuns,
