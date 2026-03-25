@@ -15,10 +15,14 @@ import {
   switchEngine,
 } from "../../../services/tauri";
 import {
-  STORAGE_KEYS,
+  STORAGE_KEYS as MODEL_STORAGE_KEYS,
   getModelMapping,
   applyModelMapping as applyMappingToDisplayName,
 } from "../../models/constants";
+import {
+  STORAGE_KEYS as PROVIDER_STORAGE_KEYS,
+  validateCodexCustomModels,
+} from "../../composer/types/provider";
 
 type UseEngineControllerOptions = {
   activeWorkspace: WorkspaceInfo | null;
@@ -50,6 +54,84 @@ const ENGINE_DISPLAY_MAP: Record<
   opencode: { displayName: "OpenCode", shortName: "OpenCode" },
 };
 
+const GEMINI_VENDOR_UPDATED_EVENT = "mossx:gemini-vendor-updated";
+const GEMINI_DEFAULT_MODEL_ID = "gemini-2.5-flash-lite";
+const GEMINI_PRESET_MODEL_IDS = [
+  "gemini-2.5-flash-lite",
+  "gemini-3-flash-preview",
+  "gemini-2.5-flash",
+  "gemini-2.5-pro",
+  "gemini-3.1-pro-preview",
+] as const;
+
+function normalizeGeminiModelEntry(
+  model: Partial<EngineModelInfo> & { id: string },
+): EngineModelInfo {
+  const normalizedId = model.id.trim();
+  return {
+    id: normalizedId,
+    displayName:
+      model.displayName && model.displayName.trim().length > 0
+        ? model.displayName.trim()
+        : normalizedId,
+    description: model.description?.trim() ?? "",
+    isDefault: Boolean(model.isDefault),
+  };
+}
+
+function appendGeminiPresetModels(models: EngineModelInfo[]): EngineModelInfo[] {
+  const merged: EngineModelInfo[] = [];
+  const seenIds = new Set<string>();
+
+  const pushModel = (model: Partial<EngineModelInfo> & { id: string }) => {
+    const normalized = normalizeGeminiModelEntry(model);
+    if (!normalized.id || seenIds.has(normalized.id)) {
+      return;
+    }
+    seenIds.add(normalized.id);
+    merged.push(normalized);
+  };
+
+  models.forEach(pushModel);
+  GEMINI_PRESET_MODEL_IDS.forEach((id) => {
+    pushModel({ id, displayName: id, description: id, isDefault: false });
+  });
+
+  return merged;
+}
+
+function enforceGeminiDefaultModel(models: EngineModelInfo[]): EngineModelInfo[] {
+  if (!models.some((model) => model.id === GEMINI_DEFAULT_MODEL_ID)) {
+    return models;
+  }
+  return models.map((model) => ({
+    ...model,
+    isDefault: model.id === GEMINI_DEFAULT_MODEL_ID,
+  }));
+}
+
+function readCustomGeminiModels(): EngineModelInfo[] {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return [];
+  }
+  try {
+    const raw = window.localStorage.getItem(PROVIDER_STORAGE_KEYS.GEMINI_CUSTOM_MODELS);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw);
+    const models = validateCodexCustomModels(parsed);
+    return models.map((model) => ({
+      id: model.id,
+      displayName: model.label?.trim() || model.id,
+      description: model.description?.trim() ?? "",
+      isDefault: false,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Convert EngineModelInfo to ModelOption format for UI compatibility
  */
@@ -79,6 +161,7 @@ export function useEngineController({
   const [isDetecting, setIsDetecting] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
   const [modelMapping, setModelMapping] = useState(getModelMapping);
+  const [geminiCustomModelsVersion, setGeminiCustomModelsVersion] = useState(0);
 
   // Track initialization
   const initRef = useRef(false);
@@ -229,6 +312,9 @@ export function useEngineController({
       try {
         await switchEngine(engineType);
         setActiveEngineState(engineType);
+        // Immediately switch visible model list to target engine snapshot to avoid
+        // showing stale models from previous engine while CLI refresh is in flight.
+        setEngineModels(status.models.length > 0 ? status.models : []);
 
         // Always refresh models from CLI and keep status models as fallback.
         await loadModelsForEngine(engineType, status.models);
@@ -298,6 +384,24 @@ export function useEngineController({
   }, [installedEngines]);
 
   const mappedEngineModels = useMemo((): EngineModelInfo[] => {
+    if (activeEngine === "gemini") {
+      const customGeminiModels = readCustomGeminiModels();
+      const customGeminiIds = new Set(
+        customGeminiModels.map((model) => model.id),
+      );
+      const mergedModels =
+        customGeminiModels.length === 0
+          ? engineModels
+          : [
+              ...customGeminiModels,
+              ...engineModels.filter(
+                (model) => !customGeminiIds.has(model.id),
+              ),
+            ];
+      return enforceGeminiDefaultModel(
+        appendGeminiPresetModels(mergedModels),
+      );
+    }
     if (activeEngine !== "claude") {
       return engineModels;
     }
@@ -309,7 +413,7 @@ export function useEngineController({
         modelMapping,
       ),
     }));
-  }, [activeEngine, engineModels, modelMapping]);
+  }, [activeEngine, engineModels, geminiCustomModelsVersion, modelMapping]);
 
   /**
    * Convert engine models to ModelOption format for UI compatibility
@@ -320,15 +424,21 @@ export function useEngineController({
 
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === STORAGE_KEYS.CLAUDE_MODEL_MAPPING) {
+      if (e.key === MODEL_STORAGE_KEYS.CLAUDE_MODEL_MAPPING) {
         setModelMapping(getModelMapping());
+      } else if (e.key === PROVIDER_STORAGE_KEYS.GEMINI_CUSTOM_MODELS) {
+        setGeminiCustomModelsVersion((value) => value + 1);
       }
     };
 
     const handleCustomStorageChange = (e: Event) => {
       const customEvent = e as CustomEvent<{ key: string }>;
-      if (customEvent.detail?.key === STORAGE_KEYS.CLAUDE_MODEL_MAPPING) {
+      if (customEvent.detail?.key === MODEL_STORAGE_KEYS.CLAUDE_MODEL_MAPPING) {
         setModelMapping(getModelMapping());
+      } else if (
+        customEvent.detail?.key === PROVIDER_STORAGE_KEYS.GEMINI_CUSTOM_MODELS
+      ) {
+        setGeminiCustomModelsVersion((value) => value + 1);
       }
     };
 
@@ -348,6 +458,23 @@ export function useEngineController({
     }
     initRef.current = true;
     refreshEngines();
+  }, [refreshEngines]);
+
+  useEffect(() => {
+    const handleGeminiVendorUpdated = () => {
+      void refreshEngines();
+    };
+
+    window.addEventListener(
+      GEMINI_VENDOR_UPDATED_EVENT,
+      handleGeminiVendorUpdated,
+    );
+    return () => {
+      window.removeEventListener(
+        GEMINI_VENDOR_UPDATED_EVENT,
+        handleGeminiVendorUpdated,
+      );
+    };
   }, [refreshEngines]);
 
   // Reset models when workspace changes

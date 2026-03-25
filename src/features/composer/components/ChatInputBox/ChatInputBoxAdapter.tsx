@@ -50,11 +50,13 @@ export type { ChatInputBoxHandle };
 
 const STREAMING_ENABLED_STORAGE_KEY = 'mossx.composer.streaming-enabled';
 const MESSAGE_QUEUE_PREVIEW_LIMIT = 120;
+const LOCAL_SETTINGS_PROVIDER_ID = '__local_settings_json__';
 
 type ClaudeProviderLike = {
   id: string;
   name: string;
   isActive?: boolean;
+  isLocalProvider?: boolean;
   settingsConfig?: {
     alwaysThinkingEnabled?: boolean;
     [key: string]: unknown;
@@ -86,6 +88,13 @@ function readStoredStreamingEnabled(): boolean {
 
 function findActiveClaudeProvider(providers: ClaudeProviderLike[]): ClaudeProviderLike | null {
   return providers.find((provider) => provider?.isActive) ?? null;
+}
+
+function isLocalClaudeProvider(provider: ClaudeProviderLike | null): boolean {
+  if (!provider) {
+    return false;
+  }
+  return Boolean(provider.isLocalProvider) || provider.id === LOCAL_SETTINGS_PROVIDER_ID;
 }
 
 function buildQueuePreviewText(content: string): string {
@@ -225,7 +234,56 @@ function isHostAbsolutePath(value: string): boolean {
   );
 }
 
-function attachmentToImageInput(attachment: Attachment): string | null {
+function decodePercentEncoded(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function fileUriToHostPath(value: string): string | null {
+  if (!value.toLowerCase().startsWith('file://')) {
+    return null;
+  }
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'file:') {
+      return null;
+    }
+    const host = parsed.host;
+    const isLocalHost = !host || parsed.hostname.toLowerCase() === 'localhost';
+    let pathPart = decodePercentEncoded(parsed.pathname || '');
+    if (!pathPart) {
+      return null;
+    }
+    // Windows file URI may look like "/C:/Users/demo/image.png"
+    if (/^\/[A-Za-z]:\//.test(pathPart)) {
+      pathPart = pathPart.slice(1);
+    }
+    if (isLocalHost) {
+      return pathPart;
+    }
+    // Preserve UNC-like host paths for Windows network shares.
+    return `//${host}${pathPart}`;
+  } catch {
+    // Keep a conservative fallback for malformed URIs.
+    let pathPart = value.slice('file://'.length);
+    if (
+      pathPart.startsWith('localhost/') ||
+      pathPart.startsWith('LOCALHOST/')
+    ) {
+      pathPart = `/${pathPart.slice('localhost/'.length)}`;
+    }
+    pathPart = decodePercentEncoded(pathPart);
+    if (/^\/[A-Za-z]:\//.test(pathPart)) {
+      pathPart = pathPart.slice(1);
+    }
+    return pathPart || null;
+  }
+}
+
+function attachmentToClaudeImageInput(attachment: Attachment): string | null {
   if (!attachment.mediaType.startsWith('image/')) {
     return null;
   }
@@ -233,8 +291,13 @@ function attachmentToImageInput(attachment: Attachment): string | null {
   if (!payload) {
     return null;
   }
+  if (payload.startsWith('data:')) {
+    return payload;
+  }
+  if (payload.toLowerCase().startsWith('file://')) {
+    return payload;
+  }
   if (
-    payload.startsWith('data:') ||
     payload.startsWith('http://') ||
     payload.startsWith('https://') ||
     isHostAbsolutePath(payload)
@@ -244,12 +307,49 @@ function attachmentToImageInput(attachment: Attachment): string | null {
   return `data:${attachment.mediaType};base64,${payload}`;
 }
 
-function attachmentsToImageInputs(attachments?: Attachment[]): string[] | undefined {
+function attachmentToGeminiImageInput(attachment: Attachment): string | null {
+  if (!attachment.mediaType.startsWith('image/')) {
+    return null;
+  }
+  const payload = attachment.data.trim();
+  if (!payload) {
+    return null;
+  }
+  if (payload.toLowerCase().startsWith('file://')) {
+    return fileUriToHostPath(payload) ?? payload;
+  }
+  if (payload.startsWith('data:')) {
+    const commaIndex = payload.indexOf(',');
+    if (commaIndex > -1) {
+      const dataSegment = payload.slice(commaIndex + 1).trim();
+      if (dataSegment.toLowerCase().startsWith('file://')) {
+        return fileUriToHostPath(dataSegment) ?? dataSegment;
+      }
+    }
+    return payload;
+  }
+  if (
+    payload.startsWith('http://') ||
+    payload.startsWith('https://') ||
+    isHostAbsolutePath(payload)
+  ) {
+    return payload;
+  }
+  return `data:${attachment.mediaType};base64,${payload}`;
+}
+
+function attachmentsToImageInputs(
+  attachments: Attachment[] | undefined,
+  provider: 'claude' | 'codex' | 'gemini' | 'opencode' = 'claude',
+): string[] | undefined {
   if (!attachments || attachments.length === 0) {
     return undefined;
   }
+  const mapper = provider === 'gemini'
+    ? attachmentToGeminiImageInput
+    : attachmentToClaudeImageInput;
   const mapped = attachments
-    .map(attachmentToImageInput)
+    .map(mapper)
     .filter((entry): entry is string => Boolean(entry));
   if (mapped.length === 0) {
     return undefined;
@@ -404,6 +504,7 @@ export const ChatInputBoxAdapter = forwardRef<ChatInputBoxHandle, ChatInputBoxAd
       selectedEngine,
       engines,
       onSelectEngine,
+      models,
       onSelectModel,
       selectedEffort,
       onSelectEffort,
@@ -459,6 +560,29 @@ export const ChatInputBoxAdapter = forwardRef<ChatInputBoxHandle, ChatInputBoxAd
       () => readStoredStreamingEnabled(),
     );
     const [codexSpeedMode, setCodexSpeedMode] = useState<CodexSpeedMode>('unknown');
+    const normalizedModels = useMemo(() => {
+      if (!models || models.length === 0) {
+        return undefined;
+      }
+      return models.map((modelOption) => ({
+        id: modelOption.id,
+        label: modelOption.displayName || modelOption.model || modelOption.id,
+        description:
+          modelOption.model &&
+          modelOption.model !== modelOption.displayName
+            ? modelOption.model
+            : undefined,
+      }));
+    }, [models]);
+    const resolvedSelectedModelId = useMemo(() => {
+      if (selectedModelId) {
+        return selectedModelId;
+      }
+      if (models && models.length > 0) {
+        return models[0]?.id ?? '';
+      }
+      return selectedEngine === 'claude' ? 'claude-sonnet-4-6' : '';
+    }, [models, selectedEngine, selectedModelId]);
 
     // Expose ChatInputBoxHandle to parent
     useImperativeHandle(ref, () => ({
@@ -482,9 +606,11 @@ export const ChatInputBoxAdapter = forwardRef<ChatInputBoxHandle, ChatInputBoxAd
             return;
           }
           const activeProvider = findActiveClaudeProvider(providers);
-          if (activeProvider) {
+          const activeProviderThinking =
+            activeProvider?.settingsConfig?.alwaysThinkingEnabled;
+          if (typeof activeProviderThinking === 'boolean') {
             setLocalAlwaysThinkingEnabled(
-              Boolean(activeProvider.settingsConfig?.alwaysThinkingEnabled),
+              activeProviderThinking,
             );
             return;
           }
@@ -512,8 +638,11 @@ export const ChatInputBoxAdapter = forwardRef<ChatInputBoxHandle, ChatInputBoxAd
 
     // Handle submit from ChatInputBox
     const handleSubmit = useCallback((submittedText: string, submittedAttachments?: Attachment[]) => {
-      onSend(submittedText, attachmentsToImageInputs(submittedAttachments));
-    }, [onSend]);
+      const provider = engineToProvider(selectedEngine);
+      const fallbackAttachments =
+        submittedAttachments ?? pathsToAttachments(attachments);
+      onSend(submittedText, attachmentsToImageInputs(fallbackAttachments, provider));
+    }, [attachments, onSend, selectedEngine]);
 
     // Handle attachment removal (convert Attachment id back to path)
     const handleRemoveAttachment = useCallback((id: string) => {
@@ -543,7 +672,7 @@ export const ChatInputBoxAdapter = forwardRef<ChatInputBoxHandle, ChatInputBoxAd
         try {
           const providers = (await getClaudeProviders()) as ClaudeProviderLike[];
           const activeProvider = findActiveClaudeProvider(providers);
-          if (!activeProvider) {
+          if (!activeProvider || isLocalClaudeProvider(activeProvider)) {
             await setClaudeAlwaysThinkingEnabled(enabled);
             return;
           }
@@ -981,7 +1110,8 @@ export const ChatInputBoxAdapter = forwardRef<ChatInputBoxHandle, ChatInputBoxAd
         value={text}
         placeholder={placeholder ?? t('chat.inputPlaceholder')}
         sendShortcut={sendShortcut}
-        selectedModel={selectedModelId ?? 'claude-sonnet-4-6'}
+        selectedModel={resolvedSelectedModelId}
+        models={normalizedModels}
         permissionMode={permissionMode}
         currentProvider={engineToProvider(selectedEngine)}
         providerAvailability={providerAvailability}
@@ -993,7 +1123,7 @@ export const ChatInputBoxAdapter = forwardRef<ChatInputBoxHandle, ChatInputBoxAd
         onStop={onStop}
         onInput={handleInput}
         attachments={pathsToAttachments(attachments)}
-        onAddAttachment={onAddAttachment ? (_files: FileList) => {
+        onAddAttachment={onAddAttachment ? (_files?: FileList | null) => {
           // In Tauri, we use the native file picker instead of FileList
           onAddAttachment?.();
         } : undefined}

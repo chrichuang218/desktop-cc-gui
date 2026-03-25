@@ -67,6 +67,16 @@ export async function pickImageFiles(): Promise<string[]> {
   return Array.isArray(selection) ? selection : [selection];
 }
 
+export async function pickFiles(): Promise<string[]> {
+  const selection = await open({
+    multiple: true,
+  });
+  if (!selection) {
+    return [];
+  }
+  return Array.isArray(selection) ? selection : [selection];
+}
+
 export async function listWorkspaces(): Promise<WorkspaceInfo[]> {
   try {
     return await invoke<WorkspaceInfo[]>("list_workspaces");
@@ -295,7 +305,7 @@ export async function sendUserMessage(
   options?: {
     model?: string | null;
     effort?: string | null;
-    accessMode?: "read-only" | "current" | "full-access";
+    accessMode?: "default" | "read-only" | "current" | "full-access";
     images?: string[];
     collaborationMode?: Record<string, unknown> | null;
     preferredLanguage?: string | null;
@@ -1881,6 +1891,32 @@ export async function loadClaudeSession(
 }
 
 /**
+ * List Gemini CLI session history for a workspace path.
+ */
+export async function listGeminiSessions(
+  workspacePath: string,
+  limit?: number | null,
+): Promise<any> {
+  return invoke<any>("list_gemini_sessions", {
+    workspacePath,
+    limit: limit ?? null,
+  });
+}
+
+/**
+ * Load full message history for a specific Gemini CLI session.
+ */
+export async function loadGeminiSession(
+  workspacePath: string,
+  sessionId: string,
+): Promise<any> {
+  return invoke<any>("load_gemini_session", {
+    workspacePath,
+    sessionId,
+  });
+}
+
+/**
  * Load full Codex local session history for a specific workspace/session.
  */
 export async function loadCodexSession(
@@ -1914,6 +1950,19 @@ export async function deleteClaudeSession(
   sessionId: string,
 ): Promise<void> {
   return invoke<void>("delete_claude_session", {
+    workspacePath,
+    sessionId,
+  });
+}
+
+/**
+ * Delete a Gemini CLI session (remove session JSON file from disk).
+ */
+export async function deleteGeminiSession(
+  workspacePath: string,
+  sessionId: string,
+): Promise<void> {
+  return invoke<void>("delete_gemini_session", {
     workspacePath,
     sessionId,
   });
@@ -2163,6 +2212,37 @@ export async function deleteCodexProvider(id: string): Promise<void> {
 
 export async function switchCodexProvider(id: string): Promise<void> {
   return invoke("vendor_switch_codex_provider", { id });
+}
+
+export interface GeminiVendorSettings {
+  enabled: boolean;
+  env: Record<string, string>;
+  authMode: string;
+}
+
+export interface GeminiVendorPreflightCheck {
+  id: string;
+  label: string;
+  status: "pass" | "fail" | string;
+  message: string;
+}
+
+export interface GeminiVendorPreflightResult {
+  checks: GeminiVendorPreflightCheck[];
+}
+
+export async function getGeminiVendorSettings(): Promise<GeminiVendorSettings> {
+  return invoke<GeminiVendorSettings>("vendor_get_gemini_settings");
+}
+
+export async function saveGeminiVendorSettings(
+  settings: GeminiVendorSettings,
+): Promise<void> {
+  return invoke("vendor_save_gemini_settings", { settings });
+}
+
+export async function getGeminiVendorPreflight(): Promise<GeminiVendorPreflightResult> {
+  return invoke<GeminiVendorPreflightResult>("vendor_gemini_preflight");
 }
 
 // ==================== Agent API ====================

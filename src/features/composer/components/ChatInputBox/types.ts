@@ -479,6 +479,8 @@ export interface ChatInputBoxProps {
   isLoading?: boolean;
   /** Current model */
   selectedModel?: string;
+  /** Optional dynamic model list from host engine */
+  models?: ModelInfo[];
   /** Current permission mode */
   permissionMode?: PermissionMode;
   /** Current provider */
@@ -546,7 +548,7 @@ export interface ChatInputBoxProps {
   /** Input change */
   onInput?: (content: string) => void;
   /** Add attachment */
-  onAddAttachment?: (files: FileList) => void;
+  onAddAttachment?: (files?: FileList | null) => void;
   /** Remove attachment */
   onRemoveAttachment?: (id: string) => void;
   /** Switch mode */
@@ -647,6 +649,8 @@ export interface ButtonAreaProps {
   isEnhancing?: boolean;
   /** Current model */
   selectedModel?: string;
+  /** Optional dynamic model list from host engine */
+  models?: ModelInfo[];
   /** Current mode */
   permissionMode?: PermissionMode;
   /** Current provider */

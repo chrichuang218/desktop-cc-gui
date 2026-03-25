@@ -426,6 +426,13 @@ function dedupeAdjacentReasoningItems(
       deduped.push(item);
       continue;
     }
+    if (
+      isExplicitReasoningSegmentId(previous.id) ||
+      isExplicitReasoningSegmentId(item.id)
+    ) {
+      deduped.push(item);
+      continue;
+    }
     const previousMeta = reasoningMetaById.get(previous.id) ?? parseReasoning(previous);
     const nextMeta = reasoningMetaById.get(item.id) ?? parseReasoning(item);
     if (!isReasoningDuplicate(previousMeta, nextMeta)) {
@@ -443,6 +450,12 @@ function dedupeAdjacentReasoningItems(
     };
   }
   return deduped;
+}
+
+const REASONING_SEGMENT_ID_REGEX = /(?:^|[:-])seg-\d+$/;
+
+function isExplicitReasoningSegmentId(id: string) {
+  return REASONING_SEGMENT_ID_REGEX.test(id);
 }
 
 function collapseConsecutiveReasoningRuns(
@@ -592,13 +605,14 @@ function normalizeReasoningItemsForTimeline(threadId: string, items: Conversatio
     return parsed.hasBody || Boolean(parsed.workingLabel);
   });
   const engine = inferReasoningPresentationEngine(threadId);
-  const appendReasoningRuns = engine === "claude" || engine === "codex";
+  const appendReasoningRuns = engine === "claude" || engine === "codex" || engine === "gemini";
   const deduped = dedupeAdjacentReasoningItems(
     filtered,
     sourceReasoningMetaById,
     appendReasoningRuns,
   );
-  const collapseReasoningRuns = engine === "claude" || engine === "codex" || engine === "opencode";
+  const collapseReasoningRuns =
+    engine === "claude" || engine === "codex" || engine === "opencode" || engine === "gemini";
   const normalized = collapseConsecutiveReasoningRuns(
     deduped,
     collapseReasoningRuns,
@@ -1039,7 +1053,9 @@ export function buildThreadActivity(args: WorkspaceSessionActivityThreadContext 
   const occurredBase = getThreadTimestamp(args.thread) || 0;
   const reasoningPresentationEngine = inferReasoningPresentationEngine(args.thread.id);
   const shouldMergeReasoningIntoFirstNode =
-    reasoningPresentationEngine === "claude" || reasoningPresentationEngine === "codex";
+    reasoningPresentationEngine === "claude" ||
+    reasoningPresentationEngine === "codex" ||
+    reasoningPresentationEngine === "gemini";
   const reasoningAnchorIndexByTurnId = new Map<string, number>();
   const exploreEventIndexBySignature = new Map<string, number>();
   const { items: normalizedItems, reasoningMetaById } = normalizeReasoningItemsForTimeline(

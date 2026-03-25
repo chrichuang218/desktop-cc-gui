@@ -166,6 +166,55 @@ describe('ChatInputBoxAdapter toggle bridge', () => {
     expect(mockState.setClaudeAlwaysThinkingEnabled).toHaveBeenCalledWith(false);
   });
 
+  it('falls back to direct claude settings when active provider lacks thinking field', async () => {
+    mockState.getClaudeProviders.mockResolvedValue([
+      {
+        id: '__local_settings_json__',
+        name: 'Local settings.json',
+        isActive: true,
+        isLocalProvider: true,
+        settingsConfig: {},
+      },
+    ]);
+    mockState.getClaudeAlwaysThinkingEnabled.mockResolvedValue(true);
+
+    renderAdapter();
+
+    await waitFor(() => expect(mockState.latestProps).toBeTruthy());
+    const latest = mockState.latestProps as {
+      alwaysThinkingEnabled?: boolean;
+    };
+    await waitFor(() => expect(latest.alwaysThinkingEnabled).toBe(true));
+    expect(mockState.getClaudeAlwaysThinkingEnabled).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses direct claude settings write when local provider is active', async () => {
+    mockState.getClaudeProviders.mockResolvedValue([
+      {
+        id: '__local_settings_json__',
+        name: 'Local settings.json',
+        isActive: true,
+        isLocalProvider: true,
+        settingsConfig: {},
+      },
+    ]);
+
+    renderAdapter();
+
+    await waitFor(() => expect(mockState.latestProps).toBeTruthy());
+    const latest = mockState.latestProps as {
+      onToggleThinking?: (enabled: boolean) => void | Promise<void>;
+    };
+
+    await act(async () => {
+      await Promise.resolve(latest.onToggleThinking?.(true));
+    });
+
+    expect(mockState.setClaudeAlwaysThinkingEnabled).toHaveBeenCalledWith(true);
+    expect(mockState.updateClaudeProvider).not.toHaveBeenCalled();
+    expect(mockState.switchClaudeProvider).not.toHaveBeenCalled();
+  });
+
   it('forwards send shortcut to ChatInputBox', async () => {
     renderAdapter({ sendShortcut: 'cmdEnter' });
 
@@ -245,6 +294,192 @@ describe('ChatInputBoxAdapter toggle bridge', () => {
       "fresh child snapshot",
       ["data:image/png;base64,ZmFrZS1pbWFnZQ=="],
     );
+  });
+
+  it("falls back to external attachments when submit callback omits attachments", async () => {
+    const onSend = vi.fn();
+    renderAdapter({
+      onSend,
+      attachments: ["file:///tmp/fallback-image.png"],
+    });
+
+    await waitFor(() => expect(mockState.latestProps).toBeTruthy());
+
+    const latest = mockState.latestProps as {
+      onSubmit?: (content: string) => void;
+    };
+
+    act(() => {
+      latest.onSubmit?.("fresh child snapshot");
+    });
+
+    expect(onSend).toHaveBeenCalledWith("fresh child snapshot", [
+      "file:///tmp/fallback-image.png",
+    ]);
+  });
+
+  it("keeps file URI attachments unchanged for claude sends", async () => {
+    const onSend = vi.fn();
+    renderAdapter({ onSend });
+
+    await waitFor(() => expect(mockState.latestProps).toBeTruthy());
+
+    const latest = mockState.latestProps as {
+      onSubmit?: (
+        content: string,
+        attachments?: Array<{
+          id: string;
+          fileName: string;
+          mediaType: string;
+          data: string;
+        }>,
+      ) => void;
+    };
+
+    act(() => {
+      latest.onSubmit?.("fresh child snapshot", [
+        {
+          id: "att-2",
+          fileName: "image.png",
+          mediaType: "image/png",
+          data: "file:///tmp/a%20b.png",
+        },
+      ]);
+    });
+
+    expect(onSend).toHaveBeenCalledWith("fresh child snapshot", ["file:///tmp/a%20b.png"]);
+  });
+
+  it("normalizes file URI attachments into host paths for gemini sends", async () => {
+    const onSend = vi.fn();
+    renderAdapter({ onSend, selectedEngine: "gemini" });
+
+    await waitFor(() => expect(mockState.latestProps).toBeTruthy());
+
+    const latest = mockState.latestProps as {
+      onSubmit?: (
+        content: string,
+        attachments?: Array<{
+          id: string;
+          fileName: string;
+          mediaType: string;
+          data: string;
+        }>,
+      ) => void;
+    };
+
+    act(() => {
+      latest.onSubmit?.("fresh child snapshot", [
+        {
+          id: "att-2b",
+          fileName: "image.png",
+          mediaType: "image/png",
+          data: "file:///tmp/a%20b.png",
+        },
+      ]);
+    });
+
+    expect(onSend).toHaveBeenCalledWith("fresh child snapshot", ["/tmp/a b.png"]);
+  });
+
+  it("keeps miswrapped data URL payload containing file URI for claude sends", async () => {
+    const onSend = vi.fn();
+    renderAdapter({ onSend });
+
+    await waitFor(() => expect(mockState.latestProps).toBeTruthy());
+
+    const latest = mockState.latestProps as {
+      onSubmit?: (
+        content: string,
+        attachments?: Array<{
+          id: string;
+          fileName: string;
+          mediaType: string;
+          data: string;
+        }>,
+      ) => void;
+    };
+
+    act(() => {
+      latest.onSubmit?.("fresh child snapshot", [
+        {
+          id: "att-3",
+          fileName: "image.png",
+          mediaType: "image/png",
+          data: "data:image/png;base64,file:///tmp/c%20d.png",
+        },
+      ]);
+    });
+
+    expect(onSend).toHaveBeenCalledWith("fresh child snapshot", [
+      "data:image/png;base64,file:///tmp/c%20d.png",
+    ]);
+  });
+
+  it("keeps localhost file URI attachments unchanged for claude sends", async () => {
+    const onSend = vi.fn();
+    renderAdapter({ onSend });
+
+    await waitFor(() => expect(mockState.latestProps).toBeTruthy());
+
+    const latest = mockState.latestProps as {
+      onSubmit?: (
+        content: string,
+        attachments?: Array<{
+          id: string;
+          fileName: string;
+          mediaType: string;
+          data: string;
+        }>,
+      ) => void;
+    };
+
+    act(() => {
+      latest.onSubmit?.("fresh child snapshot", [
+        {
+          id: "att-4",
+          fileName: "image.png",
+          mediaType: "image/png",
+          data: "file://localhost/tmp/e%20f.png",
+        },
+      ]);
+    });
+
+    expect(onSend).toHaveBeenCalledWith("fresh child snapshot", ["file://localhost/tmp/e%20f.png"]);
+  });
+
+  it("keeps UNC-like file URI host attachments unchanged for claude sends", async () => {
+    const onSend = vi.fn();
+    renderAdapter({ onSend });
+
+    await waitFor(() => expect(mockState.latestProps).toBeTruthy());
+
+    const latest = mockState.latestProps as {
+      onSubmit?: (
+        content: string,
+        attachments?: Array<{
+          id: string;
+          fileName: string;
+          mediaType: string;
+          data: string;
+        }>,
+      ) => void;
+    };
+
+    act(() => {
+      latest.onSubmit?.("fresh child snapshot", [
+        {
+          id: "att-5",
+          fileName: "image.png",
+          mediaType: "image/png",
+          data: "file://server/share/folder/a%20b.png",
+        },
+      ]);
+    });
+
+    expect(onSend).toHaveBeenCalledWith("fresh child snapshot", [
+      "file://server/share/folder/a%20b.png",
+    ]);
   });
 
   it('forwards dual context usage model and flag to ChatInputBox', async () => {
@@ -412,5 +647,61 @@ describe('ChatInputBoxAdapter toggle bridge', () => {
         title: '发布步骤',
       }),
     );
+  });
+
+  it('uses current engine model fallback when selected model is empty', async () => {
+    renderAdapter({
+      selectedEngine: 'gemini',
+      selectedModelId: null,
+      models: [
+        {
+          id: 'gemini-2.5-pro',
+          displayName: 'Gemini 2.5 Pro',
+          model: 'gemini-2.5-pro',
+        },
+        {
+          id: 'gemini-2.5-flash',
+          displayName: 'Gemini 2.5 Flash',
+          model: 'gemini-2.5-flash',
+        },
+      ],
+    });
+
+    await waitFor(() => expect(mockState.latestProps).toBeTruthy());
+
+    const latest = mockState.latestProps as {
+      selectedModel?: string;
+      models?: Array<{ id: string; label: string; description?: string }>;
+    };
+
+    expect(latest.selectedModel).toBe('gemini-2.5-pro');
+    expect(latest.models).toEqual([
+      {
+        id: 'gemini-2.5-pro',
+        label: 'Gemini 2.5 Pro',
+        description: 'gemini-2.5-pro',
+      },
+      {
+        id: 'gemini-2.5-flash',
+        label: 'Gemini 2.5 Flash',
+        description: 'gemini-2.5-flash',
+      },
+    ]);
+  });
+
+  it('does not fallback to claude model when gemini has no models yet', async () => {
+    renderAdapter({
+      selectedEngine: 'gemini',
+      selectedModelId: null,
+      models: [],
+    });
+
+    await waitFor(() => expect(mockState.latestProps).toBeTruthy());
+
+    const latest = mockState.latestProps as {
+      selectedModel?: string;
+    };
+
+    expect(latest.selectedModel).toBe('');
   });
 });

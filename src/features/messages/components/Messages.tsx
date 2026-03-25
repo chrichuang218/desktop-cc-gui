@@ -320,7 +320,7 @@ function extractLatestUserInputTextPreserveFormatting(text: string): string {
 function toConversationEngine(
   engine: "claude" | "codex" | "gemini" | "opencode",
 ): ConversationEngine {
-  if (engine === "claude" || engine === "opencode") {
+  if (engine === "claude" || engine === "gemini" || engine === "opencode") {
     return engine;
   }
   return "codex";
@@ -538,6 +538,7 @@ function isGenericReasoningTitle(title: string) {
     normalized === "reasoning" ||
     normalized === "thinking" ||
     normalized === "planning" ||
+    normalized === "思考" ||
     normalized === "思考中" ||
     normalized === "正在思考" ||
     normalized === "正在规划"
@@ -615,6 +616,25 @@ function parseReasoning(item: Extract<ConversationItem, { kind: "reasoning" }>) 
   };
 }
 
+function isGenericPlaceholderReasoningItem(
+  item: Extract<ConversationItem, { kind: "reasoning" }>,
+) {
+  const label = (item.summary || item.content || "").trim();
+  if (!label || !isGenericReasoningTitle(label)) {
+    return false;
+  }
+  const content = (item.content || "").trim();
+  if (!content) {
+    return true;
+  }
+  const compactLabel = compactComparableReasoningText(label);
+  const compactContent = compactComparableReasoningText(content);
+  if (!compactContent) {
+    return true;
+  }
+  return compactContent === compactLabel || isGenericReasoningTitle(content);
+}
+
 function isReasoningDuplicate(
   previous: ReturnType<typeof parseReasoning>,
   next: ReturnType<typeof parseReasoning>,
@@ -670,11 +690,30 @@ function dedupeAdjacentReasoningItems(
   list: ConversationItem[],
   reasoningMetaById: Map<string, ReturnType<typeof parseReasoning>>,
   appendOnly = false,
+  engine: ConversationEngine = "codex",
 ) {
   const deduped: ConversationItem[] = [];
   for (const item of list) {
     const previous = deduped[deduped.length - 1];
     if (item.kind !== "reasoning" || previous?.kind !== "reasoning") {
+      deduped.push(item);
+      continue;
+    }
+    if (
+      isExplicitReasoningSegmentId(previous.id) ||
+      isExplicitReasoningSegmentId(item.id)
+    ) {
+      if (engine === "gemini") {
+        if (
+          isGenericPlaceholderReasoningItem(previous) &&
+          isGenericPlaceholderReasoningItem(item)
+        ) {
+          // Collapse repeated placeholder reasoning slices ("思考"/"thinking")
+          // in Gemini realtime, while preserving meaningful segmented slices.
+          deduped[deduped.length - 1] = item;
+          continue;
+        }
+      }
       deduped.push(item);
       continue;
     }
@@ -698,6 +737,12 @@ function dedupeAdjacentReasoningItems(
   return deduped;
 }
 
+const REASONING_SEGMENT_ID_REGEX = /(?:^|[:-])seg-\d+$/;
+
+function isExplicitReasoningSegmentId(id: string) {
+  return REASONING_SEGMENT_ID_REGEX.test(id);
+}
+
 function collapseConsecutiveReasoningRuns(
   list: ConversationItem[],
   enabled: boolean,
@@ -715,9 +760,18 @@ function collapseConsecutiveReasoningRuns(
       index += 1;
       continue;
     }
+    if (isExplicitReasoningSegmentId(item.id)) {
+      collapsed.push(item);
+      index += 1;
+      continue;
+    }
 
     let end = index + 1;
-    while (end < list.length && list[end].kind === "reasoning") {
+    while (
+      end < list.length &&
+      list[end].kind === "reasoning" &&
+      !isExplicitReasoningSegmentId(list[end].id)
+    ) {
       end += 1;
     }
 
@@ -1666,14 +1720,7 @@ export const Messages = memo(function Messages({
   const userInputRequests = effectiveState.userInputQueue;
   const workspaceId = effectiveState.meta.workspaceId || legacyWorkspaceId;
   const threadId = effectiveState.meta.threadId || legacyThreadId;
-  const activeEngine =
-    effectiveState.meta.engine === "claude"
-      ? "claude"
-      : effectiveState.meta.engine === "opencode"
-        ? "opencode"
-        : legacyActiveEngine === "gemini"
-          ? "gemini"
-          : "codex";
+  const activeEngine = toConversationEngine(effectiveState.meta.engine);
   const isThinking = conversationState
     ? effectiveState.meta.isThinking
     : legacyIsThinking;
@@ -2069,6 +2116,11 @@ export const Messages = memo(function Messages({
         if (!parsed?.workingLabel) {
           return false;
         }
+        // Gemini realtime segmented reasoning must stay visible as independent
+        // timeline slices instead of being reduced to only the latest title-only row.
+        if (activeEngine === "gemini" && isExplicitReasoningSegmentId(item.id)) {
+          return true;
+        }
         if (activeEngine === "claude") {
           return true;
         }
@@ -2080,13 +2132,14 @@ export const Messages = memo(function Messages({
           : activeEngine === "codex";
         return keepTitleOnlyReasoning || item.id === latestTitleOnlyReasoningId;
       });
-    const appendReasoningRuns = activeEngine === "claude";
+    const appendReasoningRuns = activeEngine === "claude" || activeEngine === "gemini";
     const deduped = dedupeAdjacentReasoningItems(
       filtered,
       reasoningMetaById,
       appendReasoningRuns,
+      toConversationEngine(activeEngine),
     );
-    const collapseReasoningRuns = activeEngine !== "codex" && activeEngine !== "gemini";
+    const collapseReasoningRuns = activeEngine !== "codex";
     return collapseConsecutiveReasoningRuns(
       deduped,
       collapseReasoningRuns,

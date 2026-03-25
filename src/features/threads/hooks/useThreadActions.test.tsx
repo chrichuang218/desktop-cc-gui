@@ -1,16 +1,19 @@
 // @vitest-environment jsdom
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConversationItem, WorkspaceInfo } from "../../../types";
 import {
   archiveThread,
   deleteClaudeSession,
+  deleteGeminiSession,
   deleteOpenCodeSession,
   forkClaudeSession,
   forkThread,
   getOpenCodeSessionList,
   listClaudeSessions,
+  listGeminiSessions,
   loadClaudeSession,
+  loadGeminiSession,
   loadCodexSession,
   listThreadTitles,
   renameThreadTitleKey,
@@ -34,8 +37,10 @@ vi.mock("../../../services/tauri", () => ({
   forkClaudeSession: vi.fn(),
   forkThread: vi.fn(),
   listClaudeSessions: vi.fn(),
+  listGeminiSessions: vi.fn(),
   getOpenCodeSessionList: vi.fn(),
   loadClaudeSession: vi.fn(),
+  loadGeminiSession: vi.fn(),
   loadCodexSession: vi.fn(),
   listThreadTitles: vi.fn(),
   renameThreadTitleKey: vi.fn(),
@@ -44,6 +49,7 @@ vi.mock("../../../services/tauri", () => ({
   listThreads: vi.fn(),
   archiveThread: vi.fn(),
   deleteClaudeSession: vi.fn(),
+  deleteGeminiSession: vi.fn(),
   deleteOpenCodeSession: vi.fn(),
 }));
 
@@ -71,14 +77,17 @@ describe("useThreadActions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(listThreadTitles).mockResolvedValue({});
+    vi.mocked(listGeminiSessions).mockResolvedValue([]);
     vi.mocked(getOpenCodeSessionList).mockResolvedValue([]);
     vi.mocked(renameThreadTitleKey).mockResolvedValue(undefined);
     vi.mocked(setThreadTitle).mockResolvedValue("title");
     vi.mocked(deleteClaudeSession).mockResolvedValue(undefined);
+    vi.mocked(deleteGeminiSession).mockResolvedValue(undefined);
     vi.mocked(deleteOpenCodeSession).mockResolvedValue({
       deleted: true,
       method: "filesystem",
     });
+    vi.mocked(loadGeminiSession).mockResolvedValue({ messages: [] });
   });
 
   function renderActions(
@@ -1129,6 +1138,46 @@ describe("useThreadActions", () => {
           engineSource: "opencode",
         },
       ],
+    });
+  });
+
+  it("refreshes gemini sessions on cold start without gemini signal", async () => {
+    vi.mocked(listThreads).mockResolvedValue({
+      result: {
+        data: [],
+        nextCursor: null,
+      },
+    });
+    vi.mocked(listClaudeSessions).mockResolvedValue([]);
+    vi.mocked(getOpenCodeSessionList).mockResolvedValue([]);
+    vi.mocked(listGeminiSessions).mockResolvedValue([
+      {
+        sessionId: "ses_gemini_1",
+        firstMessage: "Gemini Hello",
+        updatedAt: 1_730_000_100_000,
+      },
+    ]);
+
+    const { result, dispatch } = renderActions();
+
+    await act(async () => {
+      await result.current.listThreadsForWorkspace(workspace);
+    });
+
+    await waitFor(() => {
+      expect(listGeminiSessions).toHaveBeenCalledWith("/tmp/codex", 50);
+      expect(dispatch).toHaveBeenCalledWith({
+        type: "setThreads",
+        workspaceId: "ws-1",
+        threads: [
+          {
+            id: "gemini:ses_gemini_1",
+            name: "Gemini Hello",
+            updatedAt: 1_730_000_100_000,
+            engineSource: "gemini",
+          },
+        ],
+      });
     });
   });
 

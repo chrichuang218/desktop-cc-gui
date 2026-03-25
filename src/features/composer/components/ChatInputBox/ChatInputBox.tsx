@@ -129,6 +129,7 @@ export const ChatInputBox = memo(forwardRef<ChatInputBoxHandle, ChatInputBoxProp
       showHeader = true,
       isLoading = false,
       selectedModel = 'claude-sonnet-4-6',
+      models,
       permissionMode = 'bypassPermissions',
       currentProvider = 'claude',
       providerAvailability,
@@ -1031,6 +1032,7 @@ export const ChatInputBox = memo(forwardRef<ChatInputBoxHandle, ChatInputBoxProp
       handleDrop,
       isDragOver,
       dragPreviewNames,
+      handleDroppedPaths,
     } = usePasteAndDrop({
       disabled,
       editableRef,
@@ -1065,6 +1067,7 @@ export const ChatInputBox = memo(forwardRef<ChatInputBoxHandle, ChatInputBoxProp
       externalAttachments,
       onAddAttachment,
       onRemoveAttachment,
+      onAttachPaths: handleDroppedPaths,
       setInternalAttachments,
     });
 
@@ -1311,6 +1314,7 @@ export const ChatInputBox = memo(forwardRef<ChatInputBoxHandle, ChatInputBoxProp
               isLoading={isLoading}
               isEnhancing={isEnhancing}
               selectedModel={selectedModel}
+              models={models}
               permissionMode={permissionMode}
               currentProvider={currentProvider}
               providerAvailability={providerAvailability}
