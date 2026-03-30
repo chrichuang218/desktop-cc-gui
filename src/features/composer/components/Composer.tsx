@@ -551,7 +551,10 @@ export const Composer = memo(function Composer({
   const isCodexEngine = selectedEngine === "codex";
   const isReviewQuickActionEngine =
     selectedEngine === "codex" || selectedEngine === "claude";
-  const showStatusPanel = selectedEngine === "claude" || selectedEngine === "codex";
+  const showStatusPanel =
+    selectedEngine === "claude" ||
+    selectedEngine === "codex" ||
+    selectedEngine === "gemini";
   const { todoTotal, subagentTotal, fileChanges, commandTotal } = useStatusPanelData(
     items,
     { isCodexEngine },
