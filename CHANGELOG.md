@@ -2,6 +2,20 @@
 
 ---
 
+##### **2026年3月30日（v0.3.6 追加更新）**
+
+English:
+
+📝 Update
+- Supplementary changelog update for v0.3.6
+
+中文：
+
+📝 更新
+- 补充更新 v0.3.6 的变更记录
+
+---
+
 ##### **2026年3月29日（v0.3.6）**
 
 English:

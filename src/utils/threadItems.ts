@@ -1622,6 +1622,90 @@ function shouldPreferExplicitFileChangeOutput(explicitOutput: string): boolean {
   return true;
 }
 
+function isSuccessfulCommandExecution(status: string): boolean {
+  const normalized = status.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return ["completed", "success", "succeeded", "ok"].includes(normalized);
+}
+
+function isApplyPatchCommand(command: string): boolean {
+  const normalized = command.toLowerCase();
+  return /(?:^|[\s;&|])apply_patch(?:\s|$)/.test(normalized);
+}
+
+function hasApplyPatchSuccessSignal(output: string): boolean {
+  return /success\.\s*updated the following files:/i.test(output);
+}
+
+function inferFileChangesFromCommandExecutionArtifacts(
+  command: string,
+  output: string,
+): Array<{ path: string; kind?: string; diff?: string }> {
+  const normalizedOutput = output.trim();
+  const normalizedCommand = command.trim();
+  if (!normalizedOutput && !normalizedCommand) {
+    return [];
+  }
+
+  const fromPatchEntries = [
+    ...inferFileChangesFromPayload(normalizedCommand),
+    ...inferFileChangesFromPayload(normalizedOutput),
+  ];
+  const byPath = new Map<string, { path: string; kind?: string; diff?: string }>();
+  for (const entry of fromPatchEntries) {
+    const normalizedPath = entry.path.trim();
+    if (!normalizedPath) {
+      continue;
+    }
+    const existing = byPath.get(normalizedPath);
+    if (!existing) {
+      byPath.set(normalizedPath, { ...entry, path: normalizedPath });
+      continue;
+    }
+    existing.kind = existing.kind || entry.kind;
+    existing.diff = pickRicherDiff(existing.diff, entry.diff);
+  }
+  if (!normalizedOutput) {
+    return Array.from(byPath.values()).filter((entry) => entry.path);
+  }
+
+  const marker = normalizedOutput.match(/updated the following files:\s*([\s\S]*)/i);
+  if (!marker) {
+    return Array.from(byPath.values()).filter((entry) => entry.path);
+  }
+
+  const lines = marker[1].split(/\r?\n/).map((line) => line.trim());
+  for (const line of lines) {
+    if (!line) {
+      continue;
+    }
+    const match = line.match(/^([A-Z])\s+(.+)$/);
+    if (!match) {
+      if (line.startsWith("at ") || line.startsWith(">")) {
+        break;
+      }
+      continue;
+    }
+    const kind = normalizeFileChangeKind(match[1]);
+    const path = match[2].trim();
+    if (!path) {
+      continue;
+    }
+    const existing = byPath.get(path);
+    if (existing) {
+      if (!existing.kind && kind) {
+        existing.kind = kind;
+      }
+      continue;
+    }
+    byPath.set(path, { path, kind: kind || undefined });
+  }
+
+  return Array.from(byPath.values()).filter((entry) => entry.path);
+}
+
 function mergeToolChanges(
   remoteChanges?: NonNullable<Extract<ConversationItem, { kind: "tool" }>["changes"]>,
   localChanges?: NonNullable<Extract<ConversationItem, { kind: "tool" }>["changes"]>,
@@ -2418,7 +2502,52 @@ export function buildConversationItem(
           },
         )
       : "";
+    const status = asString(item.status ?? "");
+    const output = stringifyUnknown(
+      item.aggregatedOutput ??
+        item.output ??
+        item.result ??
+        item.stdout ??
+        item.stderr ??
+        item.text ??
+        item.error ??
+        "",
+    );
     const durationMs = asNumber(item.durationMs ?? item.duration_ms);
+    const shouldTreatAsApplyPatchFileChange =
+      command &&
+      isApplyPatchCommand(command) &&
+      (isSuccessfulCommandExecution(status) || hasApplyPatchSuccessSignal(output));
+    if (shouldTreatAsApplyPatchFileChange) {
+      const normalizedChanges = inferFileChangesFromCommandExecutionArtifacts(command, output);
+      if (normalizedChanges.length > 0) {
+        const formattedChanges = normalizedChanges
+          .map((change) => {
+            const prefix =
+              change.kind === "add"
+                ? "A"
+                : change.kind === "delete"
+                  ? "D"
+                  : change.kind === "rename"
+                    ? "R"
+                    : change.kind
+                      ? "M"
+                      : "";
+            return [prefix, change.path].filter(Boolean).join(" ");
+          })
+          .filter(Boolean);
+        return {
+          id,
+          kind: "tool",
+          toolType: "fileChange",
+          title: "File changes",
+          detail: formattedChanges.join(", ") || "Pending changes",
+          status,
+          output,
+          changes: normalizedChanges,
+        };
+      }
+    }
     const titleText = description || command;
     return {
       id,
@@ -2426,17 +2555,8 @@ export function buildConversationItem(
       toolType: type,
       title: titleText ? `Command: ${titleText}` : "Command",
       detail: detailPayload || cwd,
-      status: asString(item.status ?? ""),
-      output: stringifyUnknown(
-        item.aggregatedOutput ??
-          item.output ??
-          item.result ??
-          item.stdout ??
-          item.stderr ??
-          item.text ??
-          item.error ??
-          "",
-      ),
+      status,
+      output,
       durationMs,
     };
   }
