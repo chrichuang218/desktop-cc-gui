@@ -12,6 +12,7 @@ import { useThreadItemEvents } from "./useThreadItemEvents";
 import { useThreadTurnEvents } from "./useThreadTurnEvents";
 import { useThreadUserInputEvents } from "./useThreadUserInputEvents";
 import { stripBackendErrorPrefix } from "../utils/networkErrors";
+import { captureClaudeMcpRuntimeSnapshotFromRaw } from "../utils/claudeMcpRuntimeSnapshot";
 import type { ThreadAction } from "./useThreadsReducer";
 import { isDebugLightPathEnabled } from "../utils/realtimePerfFlags";
 
@@ -361,6 +362,28 @@ export function useThreadEventHandlers({
             source: "stderr",
             label: "stderr/raw",
             payload: stripBackendErrorPrefix(rawMessage),
+          });
+        }
+      }
+
+      if (method === "claude/raw") {
+        const snapshot = captureClaudeMcpRuntimeSnapshotFromRaw(
+          event.workspace_id,
+          params,
+        );
+        if (snapshot && onDebug) {
+          onDebug({
+            id: `${Date.now()}-claude-mcp-snapshot`,
+            timestamp: Date.now(),
+            source: "event",
+            label: "claude/mcp-runtime-snapshot",
+            payload: {
+              workspaceId: snapshot.workspaceId,
+              sessionId: snapshot.sessionId,
+              capturedAt: snapshot.capturedAt,
+              toolsCount: snapshot.tools.length,
+              servers: snapshot.mcpServers,
+            },
           });
         }
       }

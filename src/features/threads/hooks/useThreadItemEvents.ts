@@ -5,6 +5,10 @@ import { asString } from "../utils/threadNormalize";
 import type { DebugEntry } from "../../../types";
 import type { ThreadAction } from "./useThreadsReducer";
 import { isRealtimeBatchingEnabled } from "../utils/realtimePerfFlags";
+import {
+  applyPendingClaudeMcpOutputNoticeToAgentCompleted,
+  applyPendingClaudeMcpOutputNoticeToAgentDelta,
+} from "../utils/claudeMcpRuntimeSnapshot";
 
 const CLAUDE_STREAM_DEBUG_FLAG_KEY = "mossx.debug.claude.stream";
 
@@ -557,19 +561,24 @@ export function useThreadItemEvents({
         });
         return;
       }
+      const resolvedDelta = applyPendingClaudeMcpOutputNoticeToAgentDelta(
+        workspaceId,
+        threadId,
+        delta,
+      );
       enqueueRealtimeDeltaOperation({
         kind: "agentDelta",
         workspaceId,
         threadId,
         itemId,
-        delta,
+        delta: resolvedDelta,
       });
       logClaudeStream("agent-delta", {
         workspaceId,
         threadId,
         itemId,
-        deltaLength: delta.length,
-        textPreview: createDebugPreview(delta),
+        deltaLength: resolvedDelta.length,
+        textPreview: createDebugPreview(resolvedDelta),
       });
     },
     [enqueueRealtimeDeltaOperation, interruptedThreadsRef, logClaudeStream],
@@ -590,6 +599,11 @@ export function useThreadItemEvents({
       if (shouldIgnoreInterruptedGeminiThread(interruptedThreadsRef, threadId)) {
         return;
       }
+      const resolvedText = applyPendingClaudeMcpOutputNoticeToAgentCompleted(
+        workspaceId,
+        threadId,
+        text,
+      );
       flushRealtimeDeltaOps();
       const timestamp = Date.now();
       dispatch({ type: "ensureThread", workspaceId, threadId, engine: inferEngineFromThreadId(threadId) });
@@ -599,7 +613,7 @@ export function useThreadItemEvents({
         workspaceId,
         threadId,
         itemId,
-        text,
+        text: resolvedText,
         hasCustomName,
         timestamp,
       });
@@ -612,7 +626,7 @@ export function useThreadItemEvents({
       dispatch({
         type: "setLastAgentMessage",
         threadId,
-        text,
+        text: resolvedText,
         timestamp,
       });
       recordThreadActivity(workspaceId, threadId, timestamp);
@@ -620,13 +634,18 @@ export function useThreadItemEvents({
       if (threadId !== activeThreadId) {
         dispatch({ type: "markUnread", threadId, hasUnread: true });
       }
-      onAgentMessageCompletedExternal?.({ workspaceId, threadId, itemId, text });
+      onAgentMessageCompletedExternal?.({
+        workspaceId,
+        threadId,
+        itemId,
+        text: resolvedText,
+      });
       logClaudeStream("agent-completed", {
         workspaceId,
         threadId,
         itemId,
-        deltaLength: text.length,
-        textPreview: createDebugPreview(text),
+        deltaLength: resolvedText.length,
+        textPreview: createDebugPreview(resolvedText),
       });
     },
     [

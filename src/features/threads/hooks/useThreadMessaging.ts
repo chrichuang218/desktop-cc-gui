@@ -58,6 +58,12 @@ import { pushErrorToast } from "../../../services/toasts";
 import { resolveAgentIconForAgent } from "../../../utils/agentIcons";
 import { normalizeSpecRootInput } from "../../spec/pathUtils";
 import { isValidModelId } from "../../composer/types/provider";
+import {
+  clearPendingClaudeMcpOutputNotice,
+  getClaudeMcpRuntimeSnapshot,
+  setPendingClaudeMcpOutputNotice,
+  rewriteClaudePlaywrightAlias,
+} from "../utils/claudeMcpRuntimeSnapshot";
 
 type SendMessageOptions = {
   skipPromptExpansion?: boolean;
@@ -726,6 +732,41 @@ export function useThreadMessaging({
           finalText = `${finalText}\n\n${AGENT_PROMPT_HEADER}\n\n${selectedAgentPromptBlock}`;
         }
       }
+      let claudeMcpDiagnostics: string[] = [];
+      let claudeMcpOutputNotice: string | null = null;
+      const claudeMcpSnapshot =
+        resolvedEngine === "claude"
+          ? getClaudeMcpRuntimeSnapshot(workspace.id)
+          : null;
+      if (resolvedEngine === "claude") {
+        const rewriteResult = rewriteClaudePlaywrightAlias(workspace.id, finalText);
+        finalText = rewriteResult.text;
+        claudeMcpDiagnostics = rewriteResult.diagnostics;
+        if (rewriteResult.aliasMentioned) {
+          onDebug?.({
+            id: `${Date.now()}-claude-mcp-routing`,
+            timestamp: Date.now(),
+            source: "client",
+            label: "claude/mcp-routing",
+            payload: {
+              workspaceId: workspace.id,
+              threadId,
+              applied: rewriteResult.applied,
+              fromServer: rewriteResult.fromServer,
+              toServer: rewriteResult.toServer,
+              diagnostics: rewriteResult.diagnostics,
+            },
+          });
+          claudeMcpOutputNotice = rewriteResult.applied
+            ? "MCP 路由提示：检测到 `playwright-mcp`，当前会话已自动映射为 `chrome-devtools`。"
+            : `MCP 路由提示：检测到 \`playwright-mcp\`，但当前会话未确认可见该工具。`;
+        }
+      }
+      if (resolvedEngine === "claude") {
+        setPendingClaudeMcpOutputNotice(workspace.id, threadId, claudeMcpOutputNotice);
+      } else {
+        clearPendingClaudeMcpOutputNotice(workspace.id, threadId);
+      }
       if (injectionResult.injectedCount > 0 && injectionResult.previewText) {
         dispatch({
           type: "upsertItem",
@@ -974,6 +1015,15 @@ export function useThreadMessaging({
           accessMode: resolvedAccessMode ?? null,
           agent: resolvedOpenCodeAgent,
           variant: resolvedOpenCodeVariant,
+          claudeMcpSnapshot:
+            resolvedEngine === "claude"
+              ? {
+                  capturedAt: claudeMcpSnapshot?.capturedAt ?? null,
+                  sessionId: claudeMcpSnapshot?.sessionId ?? null,
+                  toolsCount: claudeMcpSnapshot?.tools.length ?? 0,
+                  servers: claudeMcpSnapshot?.mcpServers ?? [],
+                }
+              : null,
         },
       });
       if (import.meta.env.DEV) {
@@ -1143,13 +1193,19 @@ export function useThreadMessaging({
           const rpcError = extractRpcErrorMessage(response);
           if (rpcError) {
             const normalized = mapNetworkErrorToUserMessage(rpcError, t);
+            const claudeMcpHint =
+              resolvedEngine === "claude" &&
+              !normalized.isNetwork &&
+              claudeMcpDiagnostics.length > 0
+                ? `\n\n${claudeMcpDiagnostics.join("\n")}`
+                : "";
             markProcessing(threadId, false);
             setActiveTurnId(threadId, null);
             pushThreadErrorMessage(
               threadId,
               normalized.isNetwork
                 ? normalized.message
-                : t("threads.turnFailedWithMessage", { message: normalized.message }),
+                : `${t("threads.turnFailedWithMessage", { message: normalized.message })}${claudeMcpHint}`,
             );
             if (normalized.isNetwork) {
               pushErrorToast({

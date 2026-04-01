@@ -732,6 +732,23 @@ impl ClaudeSession {
 
             // Claude CLI 2.0.52+ format: system init event
             "system" => {
+                let has_init_payload = event
+                    .get("subtype")
+                    .and_then(|value| value.as_str())
+                    .map(|value| value.eq_ignore_ascii_case("init"))
+                    .unwrap_or(false)
+                    || event.get("tools").is_some()
+                    || event.get("mcp_servers").is_some()
+                    || event.get("mcpServers").is_some();
+
+                if has_init_payload {
+                    return Some(EngineEvent::Raw {
+                        workspace_id: self.workspace_id.clone(),
+                        engine: EngineType::Claude,
+                        data: event.clone(),
+                    });
+                }
+
                 // System events contain session_id and initialization info
                 // Extract session_id here as a fallback (also checked at top-level parsing)
                 // Check both snake_case (session_id) and camelCase (sessionId) field names

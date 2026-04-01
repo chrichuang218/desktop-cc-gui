@@ -2622,11 +2622,49 @@ export const Messages = memo(function Messages({
   }, [scrollKey, isThinking, isNearBottom, liveAutoFollowEnabled]);
 
   const groupedEntries = useMemo(() => groupToolItems(renderedItems), [renderedItems]);
+  const assistantFinalBoundarySet = useMemo(() => {
+    const ids = new Set<string>();
+    let lastFinalAssistantIdInTurn: string | null = null;
+    renderedItems.forEach((entry) => {
+      if (entry.kind === "message" && entry.role === "user") {
+        if (lastFinalAssistantIdInTurn) {
+          ids.add(lastFinalAssistantIdInTurn);
+        }
+        lastFinalAssistantIdInTurn = null;
+        return;
+      }
+      if (
+        entry.kind === "message" &&
+        entry.role === "assistant" &&
+        entry.isFinal === true
+      ) {
+        lastFinalAssistantIdInTurn = entry.id;
+      }
+    });
+    if (lastFinalAssistantIdInTurn) {
+      ids.add(lastFinalAssistantIdInTurn);
+    }
+    return ids;
+  }, [renderedItems]);
   const assistantFinalWithVisibleProcessSet = useMemo(() => {
     const ids = new Set<string>();
     let hasVisibleProcessItemsInTurn = false;
+    let lastFinalAssistantIdInTurn: string | null = null;
+    let lastFinalAssistantHasProcessInTurn = false;
+    const flushTurn = () => {
+      if (
+        lastFinalAssistantIdInTurn &&
+        lastFinalAssistantHasProcessInTurn &&
+        assistantFinalBoundarySet.has(lastFinalAssistantIdInTurn)
+      ) {
+        ids.add(lastFinalAssistantIdInTurn);
+      }
+      lastFinalAssistantIdInTurn = null;
+      lastFinalAssistantHasProcessInTurn = false;
+    };
     renderedItems.forEach((entry) => {
       if (entry.kind === "message" && entry.role === "user") {
+        flushTurn();
         hasVisibleProcessItemsInTurn = false;
         return;
       }
@@ -2637,14 +2675,44 @@ export const Messages = memo(function Messages({
       if (
         entry.kind === "message" &&
         entry.role === "assistant" &&
+        entry.isFinal === true
+      ) {
+        lastFinalAssistantIdInTurn = entry.id;
+        lastFinalAssistantHasProcessInTurn = hasVisibleProcessItemsInTurn;
+      }
+    });
+    flushTurn();
+    return ids;
+  }, [assistantFinalBoundarySet, renderedItems]);
+  const assistantLiveTurnFinalBoundarySuppressedSet = useMemo(() => {
+    const ids = new Set<string>();
+    if (!isThinking) {
+      return ids;
+    }
+    let lastUserIndex = -1;
+    for (let index = renderedItems.length - 1; index >= 0; index -= 1) {
+      const entry = renderedItems[index];
+      if (entry?.kind === "message" && entry.role === "user") {
+        lastUserIndex = index;
+        break;
+      }
+    }
+    if (lastUserIndex < 0) {
+      return ids;
+    }
+    for (let index = lastUserIndex + 1; index < renderedItems.length; index += 1) {
+      const entry = renderedItems[index];
+      if (
+        entry?.kind === "message" &&
+        entry.role === "assistant" &&
         entry.isFinal === true &&
-        hasVisibleProcessItemsInTurn
+        assistantFinalBoundarySet.has(entry.id)
       ) {
         ids.add(entry.id);
       }
-    });
+    }
     return ids;
-  }, [renderedItems]);
+  }, [assistantFinalBoundarySet, isThinking, renderedItems]);
 
   const shouldRenderUserInputNode =
     (activeEngine === "codex" || activeEngine === "claude") &&
@@ -2666,7 +2734,10 @@ export const Messages = memo(function Messages({
       const itemRenderKey = `message:${item.id}`;
       const isCopied = copiedMessageId === item.id;
       const shouldRenderFinalBoundary =
-        item.role === "assistant" && item.isFinal === true;
+        item.role === "assistant" &&
+        item.isFinal === true &&
+        assistantFinalBoundarySet.has(item.id) &&
+        !assistantLiveTurnFinalBoundarySuppressedSet.has(item.id);
       const shouldRenderReasoningBoundary =
         shouldRenderFinalBoundary && assistantFinalWithVisibleProcessSet.has(item.id);
       const finalMetaParts: string[] = [];
