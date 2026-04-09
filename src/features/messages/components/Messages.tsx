@@ -39,7 +39,7 @@ import {
   BashToolGroupBlock,
   SearchToolGroupBlock,
 } from "./toolBlocks";
-import { buildCommandSummary } from "./toolBlocks/toolConstants";
+import { buildCommandSummary, extractToolName, isBashTool } from "./toolBlocks/toolConstants";
 import type { PresentationProfile } from "../presentation/presentationProfile";
 import { RequestUserInputMessage } from "../../app/components/RequestUserInputMessage";
 import { ImageLightbox, MessageImageGrid, type MessageImage } from "./MessageMediaBlocks";
@@ -567,6 +567,19 @@ function scrollKeyForItems(items: ConversationItem[]) {
 
 function resolveCodexCommandActivityLabel(item: Extract<ConversationItem, { kind: "tool" }>) {
   return buildCommandSummary(item, { includeDetail: false });
+}
+
+function shouldHideCodexCanvasCommandCard(
+  item: Extract<ConversationItem, { kind: "tool" }>,
+  activeEngine: "claude" | "codex" | "gemini" | "opencode",
+) {
+  if (activeEngine !== "codex") {
+    return false;
+  }
+  if (item.toolType === "commandExecution") {
+    return true;
+  }
+  return isBashTool(extractToolName(item.title).toLowerCase());
 }
 
 function resolveWorkingActivityLabel(
@@ -2307,6 +2320,9 @@ export const Messages = memo(function Messages({
       return <DiffRow key={`diff:${item.id}`} item={item} />;
     }
     if (item.kind === "tool") {
+      if (shouldHideCodexCanvasCommandCard(item, activeEngine)) {
+        return null;
+      }
       const isExpanded = expandedItems.has(item.id);
       return (
         <ToolBlockRenderer
@@ -2353,6 +2369,9 @@ export const Messages = memo(function Messages({
       );
     }
     if (entry.kind === "bashGroup") {
+      if (activeEngine === "codex") {
+        return null;
+      }
       const firstItem = entry.items[0];
       return (
         <BashToolGroupBlock

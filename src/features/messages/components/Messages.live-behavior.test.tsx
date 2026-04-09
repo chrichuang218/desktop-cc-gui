@@ -65,6 +65,95 @@ describe("Messages live behavior", () => {
     expect(container.querySelector(".thinking-title")).toBeTruthy();
   });
 
+  it("hides command cards in codex canvas while keeping non-command tool cards", () => {
+    const items: ConversationItem[] = [
+      {
+        id: "tool-codex-command-1",
+        kind: "tool",
+        title: "Command: pwd && ls -la",
+        detail: "/tmp",
+        toolType: "commandExecution",
+        output: "done",
+        status: "completed",
+      },
+      {
+        id: "tool-codex-command-2",
+        kind: "tool",
+        title: "Command: echo done",
+        detail: "/tmp",
+        toolType: "commandExecution",
+        output: "done",
+        status: "completed",
+      },
+      {
+        id: "tool-codex-edit-1",
+        kind: "tool",
+        title: "Tool: edit",
+        detail: JSON.stringify({
+          file_path: "src/keep.ts",
+          old_string: "before",
+          new_string: "after",
+        }),
+        toolType: "edit",
+        status: "completed",
+      },
+    ];
+
+    const { container } = render(
+      <Messages
+        items={items}
+        threadId="thread-1"
+        workspaceId="ws-1"
+        isThinking={false}
+        activeEngine="codex"
+        openTargets={[]}
+        selectedOpenAppId=""
+      />,
+    );
+
+    expect(container.querySelector(".bash-group-container")).toBeNull();
+    expect(container.textContent ?? "").not.toContain("pwd && ls -la");
+    expect(container.textContent ?? "").not.toContain("echo done");
+    expect(container.textContent ?? "").toContain("keep.ts");
+  });
+
+  it("keeps command cards visible for non-codex engines", () => {
+    const items: ConversationItem[] = [
+      {
+        id: "tool-claude-command-1",
+        kind: "tool",
+        title: "Command: pwd && ls -la",
+        detail: "/tmp",
+        toolType: "commandExecution",
+        output: "done",
+        status: "completed",
+      },
+      {
+        id: "tool-claude-command-2",
+        kind: "tool",
+        title: "Command: echo done",
+        detail: "/tmp",
+        toolType: "commandExecution",
+        output: "done",
+        status: "completed",
+      },
+    ];
+
+    const { container } = render(
+      <Messages
+        items={items}
+        threadId="thread-1"
+        workspaceId="ws-1"
+        isThinking={false}
+        activeEngine="claude"
+        openTargets={[]}
+        selectedOpenAppId=""
+      />,
+    );
+
+    expect(container.querySelector(".bash-group-container")).toBeTruthy();
+  });
+
   it("disables auto-follow scrolling when live auto-follow toggle is off", () => {
     window.localStorage.setItem("mossx.messages.live.autoFollow", "0");
     const scrollSpy = vi
