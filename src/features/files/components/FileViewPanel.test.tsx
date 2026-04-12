@@ -725,6 +725,31 @@ describe("FileViewPanel markdown modes", () => {
     });
   });
 
+  it("falls back to low-cost code preview for truncated markdown files", async () => {
+    vi.mocked(readWorkspaceFile).mockResolvedValue({
+      content: "# Hello\n" + "body\n".repeat(32),
+      truncated: true,
+    });
+
+    const { container } = render(
+      <FileViewPanel
+        workspaceId="ws-md-low-cost"
+        workspacePath="/repo"
+        filePath="README.md"
+        openTargets={[]}
+        openAppIconById={{}}
+        selectedOpenAppId=""
+        onSelectOpenAppId={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".fvp-code-preview")).toBeTruthy();
+    });
+    expect(screen.queryByTestId("file-markdown-preview")).toBeNull();
+  });
+
   it("toggles markdown preview and preserves edits", async () => {
     vi.mocked(readWorkspaceFile).mockResolvedValue({
       content: "# Start",
@@ -981,6 +1006,38 @@ describe("FileViewPanel markdown modes", () => {
     await screen.findByTestId("file-structured-preview");
     expect(screen.getByText("FROM")).toBeTruthy();
     expect(screen.getByText("node:20-alpine")).toBeTruthy();
+  });
+
+  it("falls back to low-cost code preview for truncated structured files", async () => {
+    vi.mocked(readWorkspaceFile).mockResolvedValue({
+      content: [
+        "# production image",
+        "FROM node:20-alpine",
+        "RUN pnpm install",
+      ].join("\n"),
+      truncated: true,
+    });
+
+    const { container } = render(
+      <FileViewPanel
+        workspaceId="ws-docker-low-cost"
+        workspacePath="/repo"
+        filePath="Dockerfile"
+        openTargets={[]}
+        openAppIconById={{}}
+        selectedOpenAppId=""
+        onSelectOpenAppId={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    await screen.findByTestId("mock-codemirror");
+    fireEvent.click(screen.getByRole("button", { name: /preview/i }));
+
+    await waitFor(() => {
+      expect(container.querySelector(".fvp-code-preview")).toBeTruthy();
+    });
+    expect(screen.queryByTestId("file-structured-preview")).toBeNull();
   });
 
   it("does not add structured edit tabs for regular code files", async () => {

@@ -52,17 +52,14 @@ import {
   writeWorkspaceFile,
 } from "../../../services/tauri";
 import { subscribeDetachedExternalFileChanges } from "../../../services/events";
-import { highlightLine, languageFromPath } from "../../../utils/syntax";
+import { highlightLine } from "../../../utils/syntax";
 import { OpenAppMenu } from "../../app/components/OpenAppMenu";
 import FileIcon from "../../../components/FileIcon";
 import { pushErrorToast } from "../../../services/toasts";
 import type { GitFileStatus, OpenAppTarget } from "../../../types";
-import { codeMirrorExtensionsForPath } from "../utils/codemirrorLanguageExtensions";
+import { codeMirrorExtensionsForEditorLanguage } from "../utils/codemirrorLanguageExtensions";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
-import {
-  FileStructuredPreview,
-  resolveStructuredPreviewKind,
-} from "./FileStructuredPreview";
+import { FileStructuredPreview } from "./FileStructuredPreview";
 import {
   lspPositionToEditorLocation,
   offsetToLspPosition,
@@ -84,6 +81,11 @@ import {
   reduceExternalChangeSyncState,
   type ExternalChangeSyncState,
 } from "../externalChangeStateMachine";
+import {
+  measureFilePreviewMetrics,
+  resolveFileRenderProfile,
+  shouldUseLowCostPreview,
+} from "../utils/fileRenderProfile";
 
 type FileViewPanelProps = {
   workspaceId: string;
@@ -132,7 +134,6 @@ type FileViewPanelProps = {
   externalChangePollIntervalMs?: number;
 };
 
-const markdownExtensions = new Set(["md", "mdx"]);
 const NAVIGATION_REQUEST_TIMEOUT_MS = 8_000;
 const CODE_INTEL_CACHE_TTL_MS = 3_000;
 const CODE_INTEL_REPEAT_DEBOUNCE_MS = 120;
@@ -151,47 +152,8 @@ type ExternalChangeConflict = {
   detectedAt: number;
 };
 
-function isMarkdownPath(path: string) {
-  const ext = path.split(".").pop()?.toLowerCase() ?? "";
-  return markdownExtensions.has(ext);
-}
-
 function isMissingFileErrorMessage(message: string): boolean {
   return MISSING_FILE_ERROR_PATTERN.test(message);
-}
-
-const imageExtensions = new Set([
-  "png", "jpg", "jpeg", "gif", "svg", "webp",
-  "avif", "bmp", "heic", "heif", "tif", "tiff", "ico",
-]);
-
-const binaryExtensions = new Set([
-  // images
-  ...imageExtensions,
-  // audio
-  "mp3", "wav", "ogg", "flac", "aac", "m4a", "wma",
-  // video
-  "mp4", "mov", "avi", "mkv", "wmv", "flv", "webm",
-  // archives
-  "zip", "tar", "gz", "rar", "7z", "bz2",
-  // documents
-  "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
-  // executables & binaries
-  "exe", "dll", "so", "dylib", "bin", "dmg", "iso",
-  // fonts
-  "ttf", "otf", "woff", "woff2", "eot",
-  // other
-  "class", "o", "a", "lib", "pyc", "wasm",
-]);
-
-function isImagePath(path: string) {
-  const ext = path.split(".").pop()?.toLowerCase() ?? "";
-  return imageExtensions.has(ext);
-}
-
-function isBinaryPath(path: string) {
-  const ext = path.split(".").pop()?.toLowerCase() ?? "";
-  return binaryExtensions.has(ext);
 }
 
 function resolveEditorTheme(): EditorTheme {
@@ -562,14 +524,12 @@ export function FileViewPanel({
   externalChangePollIntervalMs = EXTERNAL_CHANGE_POLL_INTERVAL_MS,
 }: FileViewPanelProps) {
   const { t } = useTranslation();
-  const isMarkdown = useMemo(() => isMarkdownPath(filePath), [filePath]);
-  const structuredPreviewKind = useMemo(
-    () => resolveStructuredPreviewKind(filePath),
-    [filePath],
-  );
+  const renderProfile = useMemo(() => resolveFileRenderProfile(filePath), [filePath]);
+  const isMarkdown = renderProfile.kind === "markdown";
+  const structuredPreviewKind = renderProfile.structuredKind;
   const defaultsToPreview = isMarkdown;
-  const isImage = useMemo(() => isImagePath(filePath), [filePath]);
-  const isBinary = useMemo(() => isBinaryPath(filePath), [filePath]);
+  const isImage = renderProfile.kind === "image";
+  const isBinary = renderProfile.kind === "binary-unsupported";
   const [mode, setMode] = useState<"preview" | "edit">(
     () => (defaultsToPreview ? "preview" : initialMode),
   );
@@ -1279,9 +1239,9 @@ export function FileViewPanel({
 
   // CodeMirror extensions (Mod-s handled inside CM; window-level handles preview mode)
   const cmExtensions = useMemo(() => {
-    const langExt = codeMirrorExtensionsForPath(filePath);
+    const langExt = codeMirrorExtensionsForEditorLanguage(renderProfile.editorLanguage);
     return [...langExt, gitLineMarkersExtension()];
-  }, [filePath]);
+  }, [renderProfile.editorLanguage]);
 
   useEffect(() => {
     const view = cmRef.current?.view;
@@ -1805,15 +1765,27 @@ export function FileViewPanel({
   }, [isLoading, mode, openFindPanelInEditor, truncated]);
 
   // Syntax highlighted lines for code preview
-  const language = useMemo(() => languageFromPath(filePath), [filePath]);
+  const previewMetrics = useMemo(
+    () => measureFilePreviewMetrics(content, truncated),
+    [content, truncated],
+  );
+  const useLowCostPreview = useMemo(
+    () => shouldUseLowCostPreview(renderProfile, previewMetrics),
+    [previewMetrics, renderProfile],
+  );
+  const previewLanguage = renderProfile.previewLanguage;
+  const highlightedPreviewLanguage = useMemo(
+    () => (useLowCostPreview ? null : previewLanguage),
+    [previewLanguage, useLowCostPreview],
+  );
   const lines = useMemo(() => content.split("\n"), [content]);
   const highlightedLines = useMemo(
     () =>
       lines.map((line) => {
-        const html = highlightLine(line, language);
+        const html = highlightLine(line, highlightedPreviewLanguage);
         return html || "&nbsp;";
       }),
-    [lines, language],
+    [highlightedPreviewLanguage, lines],
   );
   const editorExtensions = useMemo(
     () => [
@@ -2353,7 +2325,7 @@ export function FileViewPanel({
     }
 
     // Preview mode: Markdown rendered
-    if (isMarkdown) {
+    if (isMarkdown && !useLowCostPreview) {
       return (
         <div className="fvp-preview-scroll">
           <FileMarkdownPreview
@@ -2364,7 +2336,7 @@ export function FileViewPanel({
       );
     }
 
-    if (structuredPreviewKind) {
+    if (structuredPreviewKind && !useLowCostPreview) {
       return (
         <div className="fvp-preview-scroll">
           <FileStructuredPreview
@@ -2456,7 +2428,7 @@ export function FileViewPanel({
             type="button"
             className="ghost fvp-action-btn"
             onClick={() => {
-              const fence = language ? `\`\`\`${language}` : "```";
+              const fence = previewLanguage ? `\`\`\`${previewLanguage}` : "```";
               const snippet = `${filePath}\n${fence}\n${content}\n\`\`\``;
               onInsertText(snippet);
             }}
