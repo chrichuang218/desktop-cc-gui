@@ -10,9 +10,25 @@ use serde_json::Value;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::Semaphore;
+use tokio::time::timeout;
+
+const LOCAL_SESSION_SCAN_TIMEOUT: Duration = Duration::from_secs(60);
+
+fn normalize_session_id(session_id: &str) -> Result<String, String> {
+    let normalized = session_id.trim();
+    if normalized.is_empty()
+        || normalized.contains('/')
+        || normalized.contains('\\')
+        || normalized.contains("..")
+    {
+        return Err("[SESSION_NOT_FOUND] Invalid Claude session id".to_string());
+    }
+    Ok(normalized.to_string())
+}
 
 /// Summary of a Claude Code session for sidebar display
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -365,67 +381,71 @@ pub async fn list_claude_sessions(
     workspace_path: &Path,
     limit: Option<usize>,
 ) -> Result<Vec<ClaudeSessionSummary>, String> {
-    let base_dir = claude_projects_dir().ok_or("Cannot determine home directory")?;
-    let project_dirs = claude_project_dirs_for_path(&base_dir, workspace_path);
+    timeout(LOCAL_SESSION_SCAN_TIMEOUT, async {
+        let base_dir = claude_projects_dir().ok_or("Cannot determine home directory")?;
+        let project_dirs = claude_project_dirs_for_path(&base_dir, workspace_path);
 
-    let mut jsonl_paths: Vec<PathBuf> = Vec::new();
-    let mut seen_paths = HashSet::new();
-    let mut found_dir = false;
+        let mut jsonl_paths: Vec<PathBuf> = Vec::new();
+        let mut seen_paths = HashSet::new();
+        let mut found_dir = false;
 
-    for project_dir in project_dirs {
-        if !project_dir.exists() {
-            continue;
-        }
-        found_dir = true;
-        let mut entries = fs::read_dir(&project_dir)
-            .await
-            .map_err(|e| format!("Failed to read Claude project directory: {}", e))?;
+        for project_dir in project_dirs {
+            if !project_dir.exists() {
+                continue;
+            }
+            found_dir = true;
+            let mut entries = fs::read_dir(&project_dir)
+                .await
+                .map_err(|e| format!("Failed to read Claude project directory: {}", e))?;
 
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            let path = entry.path();
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                // Only .jsonl files, skip agent-* subagent sessions
-                if name.ends_with(".jsonl") && !name.starts_with("agent-") {
-                    if seen_paths.insert(path.clone()) {
-                        jsonl_paths.push(path);
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                let path = entry.path();
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    // Only .jsonl files, skip agent-* subagent sessions
+                    if name.ends_with(".jsonl") && !name.starts_with("agent-") {
+                        if seen_paths.insert(path.clone()) {
+                            jsonl_paths.push(path);
+                        }
                     }
                 }
             }
         }
-    }
 
-    if !found_dir {
-        return Ok(Vec::new());
-    }
-
-    // Scan all session files concurrently with a concurrency limit to prevent
-    // memory exhaustion from spawning too many parallel file reads.
-    const MAX_CONCURRENT_SCANS: usize = 10;
-    let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_SCANS));
-    let mut handles = Vec::new();
-    for path in jsonl_paths {
-        let permit = semaphore.clone();
-        handles.push(tokio::spawn(async move {
-            let _permit = permit.acquire().await;
-            scan_session_file(&path).await
-        }));
-    }
-
-    let mut sessions: Vec<ClaudeSessionSummary> = Vec::new();
-    for handle in handles {
-        if let Ok(Some(summary)) = handle.await {
-            sessions.push(summary);
+        if !found_dir {
+            return Ok(Vec::new());
         }
-    }
 
-    // Sort by updated_at descending (most recent first)
-    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        // Scan all session files concurrently with a concurrency limit to prevent
+        // memory exhaustion from spawning too many parallel file reads.
+        const MAX_CONCURRENT_SCANS: usize = 10;
+        let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_SCANS));
+        let mut handles = Vec::new();
+        for path in jsonl_paths {
+            let permit = semaphore.clone();
+            handles.push(tokio::spawn(async move {
+                let _permit = permit.acquire().await;
+                scan_session_file(&path).await
+            }));
+        }
 
-    // Apply limit
-    let limit = limit.unwrap_or(200);
-    sessions.truncate(limit);
+        let mut sessions: Vec<ClaudeSessionSummary> = Vec::new();
+        for handle in handles {
+            if let Ok(Some(summary)) = handle.await {
+                sessions.push(summary);
+            }
+        }
 
-    Ok(sessions)
+        // Sort by updated_at descending (most recent first)
+        sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+
+        // Apply limit
+        let limit = limit.unwrap_or(200);
+        sessions.truncate(limit);
+
+        Ok(sessions)
+    })
+    .await
+    .map_err(|_| "Claude session scan timed out".to_string())?
 }
 
 /// A single message from a Claude Code session, suitable for frontend display.
@@ -500,14 +520,15 @@ fn resolve_session_file_path(
     workspace_path: &Path,
     session_id: &str,
 ) -> Result<PathBuf, String> {
+    let normalized_session_id = normalize_session_id(session_id)?;
     let project_dirs = claude_project_dirs_for_path(base_dir, workspace_path);
     for project_dir in project_dirs {
-        let candidate = project_dir.join(format!("{}.jsonl", session_id));
+        let candidate = project_dir.join(format!("{}.jsonl", normalized_session_id));
         if candidate.exists() {
             return Ok(candidate);
         }
     }
-    Err(format!("Session file not found: {}", session_id))
+    Err(format!("Session file not found: {}", normalized_session_id))
 }
 
 fn is_target_user_message_entry(entry: &Value, target_message_id: &str) -> bool {
@@ -541,8 +562,9 @@ pub async fn load_claude_session(
     workspace_path: &Path,
     session_id: &str,
 ) -> Result<ClaudeSessionLoadResult, String> {
+    let normalized_session_id = normalize_session_id(session_id)?;
     let base_dir = claude_projects_dir().ok_or("Cannot determine home directory")?;
-    load_claude_session_from_base_dir(&base_dir, workspace_path, session_id).await
+    load_claude_session_from_base_dir(&base_dir, workspace_path, &normalized_session_id).await
 }
 
 async fn load_claude_session_from_base_dir(
@@ -865,8 +887,9 @@ pub async fn fork_claude_session(
     workspace_path: &Path,
     session_id: &str,
 ) -> Result<String, String> {
+    let normalized_session_id = normalize_session_id(session_id)?;
     let base_dir = claude_projects_dir().ok_or("Cannot determine home directory")?;
-    let source_file = resolve_session_file_path(&base_dir, workspace_path, session_id)?;
+    let source_file = resolve_session_file_path(&base_dir, workspace_path, &normalized_session_id)?;
     let target_dir = source_file
         .parent()
         .map(PathBuf::from)
@@ -887,7 +910,7 @@ pub async fn fork_claude_session(
     while let Ok(Some(line)) = reader.next_line().await {
         let mut output = line;
         if let Ok(mut json_value) = serde_json::from_str::<Value>(&output) {
-            rewrite_session_id_fields(&mut json_value, session_id, &forked_session_id);
+            rewrite_session_id_fields(&mut json_value, &normalized_session_id, &forked_session_id);
             output = serde_json::to_string(&json_value)
                 .map_err(|e| format!("Failed to serialize forked session entry: {}", e))?;
         }
@@ -918,12 +941,13 @@ async fn fork_claude_session_from_message_in_base_dir(
     session_id: &str,
     message_id: &str,
 ) -> Result<String, String> {
+    let normalized_session_id = normalize_session_id(session_id)?;
     let target_message_id = message_id.trim();
     if target_message_id.is_empty() {
         return Err("message_id is required".to_string());
     }
 
-    let source_file = resolve_session_file_path(base_dir, workspace_path, session_id)?;
+    let source_file = resolve_session_file_path(base_dir, workspace_path, &normalized_session_id)?;
     let target_dir = source_file
         .parent()
         .map(PathBuf::from)
@@ -948,7 +972,7 @@ async fn fork_claude_session_from_message_in_base_dir(
                 found_target = true;
                 break;
             }
-            rewrite_session_id_fields(&mut json_value, session_id, &forked_session_id);
+            rewrite_session_id_fields(&mut json_value, &normalized_session_id, &forked_session_id);
             output = serde_json::to_string(&json_value)
                 .map_err(|e| format!("Failed to serialize forked session entry: {}", e))?;
         }
@@ -964,7 +988,7 @@ async fn fork_claude_session_from_message_in_base_dir(
         let _ = fs::remove_file(&target_file).await;
         return Err(format!(
             "Target user message not found in session {}: {}",
-            session_id, target_message_id
+            normalized_session_id, target_message_id
         ));
     }
 
@@ -990,11 +1014,12 @@ pub async fn fork_claude_session_from_message(
 /// Looks for `{session_id}.jsonl` across all candidate project directories
 /// for the given workspace path. Also removes any associated agent-* files.
 pub async fn delete_claude_session(workspace_path: &Path, session_id: &str) -> Result<(), String> {
+    let normalized_session_id = normalize_session_id(session_id)?;
     let base_dir = claude_projects_dir().ok_or("Cannot determine home directory")?;
     let project_dirs = claude_project_dirs_for_path(&base_dir, workspace_path);
 
-    let session_filename = format!("{}.jsonl", session_id);
-    let agent_prefix = format!("agent-{}", session_id);
+    let session_filename = format!("{}.jsonl", normalized_session_id);
+    let agent_prefix = format!("agent-{}", normalized_session_id);
     let mut deleted = false;
 
     for project_dir in project_dirs {
@@ -1024,15 +1049,16 @@ pub async fn delete_claude_session(workspace_path: &Path, session_id: &str) -> R
     if deleted {
         Ok(())
     } else {
-        Err(format!("Session file not found: {}", session_id))
+        Err(format!("Session file not found: {}", normalized_session_id))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_images_from_content, fork_claude_session_from_message_in_base_dir,
-        is_encoded_workspace_prefix_match, load_claude_session_from_base_dir,
+        delete_claude_session, extract_images_from_content,
+        fork_claude_session_from_message_in_base_dir, is_encoded_workspace_prefix_match,
+        load_claude_session_from_base_dir,
     };
     use serde_json::json;
     use uuid::Uuid;
@@ -1329,5 +1355,23 @@ mod tests {
         assert_eq!(after_files.len(), before_files.len());
 
         let _ = std::fs::remove_dir_all(&temp_root);
+    }
+
+    #[tokio::test]
+    async fn load_claude_session_rejects_invalid_session_id() {
+        let workspace_path = std::env::temp_dir();
+        let error = super::load_claude_session(&workspace_path, "../secrets")
+            .await
+            .expect_err("invalid session id should fail");
+        assert!(error.contains("Invalid Claude session id"));
+    }
+
+    #[tokio::test]
+    async fn delete_claude_session_rejects_invalid_session_id() {
+        let workspace_path = std::env::temp_dir();
+        let error = delete_claude_session(&workspace_path, "..\\secrets")
+            .await
+            .expect_err("invalid session id should fail");
+        assert!(error.contains("Invalid Claude session id"));
     }
 }
