@@ -62,6 +62,8 @@ export function TopbarSessionTabs({
           title={`${tab.engineLabel} · ${tab.label}`}
           data-tauri-drag-region="false"
           onContextMenu={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
             onShowTabMenu(
               { x: event.clientX, y: event.clientY },
               tab.workspaceId,
