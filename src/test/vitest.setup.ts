@@ -46,7 +46,7 @@ vi.mock("react-i18next", () => ({
         "sidebar.newCloneAgent": "New clone agent",
         "sidebar.noProjectsMatch": "No projects match your search.",
         "sidebar.addWorkspaceToStart": "Add a workspace to start.",
-        "sidebar.quickNewThread": "New Thread",
+        "sidebar.quickNewThread": "Home",
         "sidebar.quickAutomation": "Automation",
         "sidebar.quickSearch": "Search",
         "sidebar.quickSkills": "Skills",

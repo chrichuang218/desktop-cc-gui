@@ -10,7 +10,10 @@ import { homeDir } from "@tauri-apps/api/path";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { ensureWorkspacePathDir, isWebServiceRuntime } from "../services/tauri";
 import { pushErrorToast } from "../services/toasts";
-import { resolveKanbanThreadCreationStrategy } from "../features/kanban/utils/contextMode";
+import {
+  isKanbanThreadCompatibleWithEngine,
+  resolveKanbanThreadCreationStrategy,
+} from "../features/kanban/utils/contextMode";
 import { deriveKanbanTaskTitle } from "../features/kanban/utils/taskTitle";
 import { findTaskDownstream } from "../features/kanban/utils/chaining";
 import { buildChainedPromptPrefix, extractKanbanResultSnapshot } from "../features/kanban/utils/resultSnapshot";
@@ -531,6 +534,14 @@ export function useAppShellSections(ctx: any) {
       const engine = (activeEngine === "codex" ? "codex" : "claude") as
         | "codex"
         | "claude";
+      const activeThreadEngine =
+        activeThreadId && activeWorkspaceId
+          ? (
+              threadsByWorkspace[activeWorkspaceId]?.find(
+                (thread) => thread.id === activeThreadId,
+              )?.engineSource ?? null
+            )
+          : null;
       const isActiveThreadInWorkspace = Boolean(
         activeWorkspaceId &&
           activeThreadId &&
@@ -542,6 +553,7 @@ export function useAppShellSections(ctx: any) {
         mode: composerKanbanContextMode,
         engine,
         activeThreadId,
+        activeThreadEngine,
         activeWorkspaceId,
         targetWorkspaceId: workspace.id,
         isActiveThreadInWorkspace,
@@ -997,6 +1009,7 @@ export function useAppShellSections(ctx: any) {
 
         await connectWorkspace(workspace);
         const engine = (task.engineType ?? activeEngine) as "claude" | "codex";
+        const workspaceThreads = threadsByWorkspace[workspace.id] ?? [];
         const { outboundModel } = await syncKanbanExecutionEngineAndModel({
           activate: params.activate,
           engine,
@@ -1007,10 +1020,33 @@ export function useAppShellSections(ctx: any) {
         });
 
         const shouldForceNewThread = Boolean(params.forceNewThread);
-        let threadId = shouldForceNewThread ? null : task.threadId;
+        const canonicalTaskThreadId =
+          shouldForceNewThread
+            ? null
+            : resolveTaskThreadId(task.threadId, resolveCanonicalThreadId);
+        const canonicalTaskThreadEngine =
+          canonicalTaskThreadId
+            ? (
+                workspaceThreads.find((entry) => entry.id === canonicalTaskThreadId)
+                  ?.engineSource ?? null
+              )
+            : null;
+        const canReuseExistingThread = isKanbanThreadCompatibleWithEngine({
+          engine,
+          threadId: canonicalTaskThreadId,
+          threadEngine: canonicalTaskThreadEngine,
+        });
+        let threadId = canReuseExistingThread ? canonicalTaskThreadId : null;
         if (shouldForceNewThread && task.threadId) {
           // Keep previous run in review state before switching task to the new execution thread.
           kanbanUpdateTask(task.id, { status: "testing" });
+        }
+        if (
+          canonicalTaskThreadId &&
+          canonicalTaskThreadId !== task.threadId &&
+          canReuseExistingThread
+        ) {
+          kanbanUpdateTask(task.id, { threadId: canonicalTaskThreadId });
         }
         if (!threadId) {
           threadId = await startThreadForWorkspace(workspace.id, {
@@ -1062,6 +1098,7 @@ export function useAppShellSections(ctx: any) {
       workspacesByPath,
       connectWorkspace,
       activeEngine,
+      threadsByWorkspace,
       setActiveEngine,
       setSelectedModelId,
       setEngineSelectedModelIdByType,
@@ -1070,6 +1107,7 @@ export function useAppShellSections(ctx: any) {
       sendUserMessageToThread,
       updateTaskExecution,
       setTaskChainBlockedReason,
+      resolveCanonicalThreadId,
     ],
   );
 
@@ -1084,6 +1122,7 @@ export function useAppShellSections(ctx: any) {
       selectWorkspace(workspace.id);
 
       const engine = (task.engineType ?? activeEngine) as "claude" | "codex";
+      const workspaceThreads = threadsByWorkspace[workspace.id] ?? [];
       await setActiveEngine(engine);
 
       // Apply the model that was selected when the task was created
@@ -1099,18 +1138,30 @@ export function useAppShellSections(ctx: any) {
       }
 
       if (task.threadId) {
-        const threads = threadsByWorkspace[workspace.id] ?? [];
         let resolvedThreadId =
           resolveTaskThreadId(task.threadId, resolveCanonicalThreadId) ?? task.threadId;
+        const resolvedThreadEngine =
+          workspaceThreads.find((entry) => entry.id === resolvedThreadId)?.engineSource ?? null;
+        const canReuseExistingThread = isKanbanThreadCompatibleWithEngine({
+          engine,
+          threadId: resolvedThreadId,
+          threadEngine: resolvedThreadEngine,
+        });
         if (resolvedThreadId !== task.threadId) {
           kanbanUpdateTask(task.id, { threadId: resolvedThreadId });
+        }
+
+        if (!canReuseExistingThread) {
+          resolvedThreadId = "";
         }
 
         const isPendingThread =
           resolvedThreadId.startsWith("claude-pending-") ||
           resolvedThreadId.startsWith("opencode-pending-");
         const hasThreadStatus = threadStatusById[resolvedThreadId] !== undefined;
-        const existsInWorkspaceThreads = threads.some((entry) => entry.id === resolvedThreadId);
+        const existsInWorkspaceThreads = workspaceThreads.some(
+          (entry) => entry.id === resolvedThreadId,
+        );
 
         if (isPendingThread && !hasThreadStatus && !existsInWorkspaceThreads) {
           const occupiedThreadIds = new Set(
@@ -1130,7 +1181,7 @@ export function useAppShellSections(ctx: any) {
           );
           const uniqueCandidate = resolvePendingSessionThreadCandidate({
             pendingThreadId: resolvedThreadId,
-            workspaceThreadIds: threads.map((entry) => entry.id),
+            workspaceThreadIds: workspaceThreads.map((entry) => entry.id),
             occupiedThreadIds,
           });
           if (uniqueCandidate) {
@@ -1141,7 +1192,7 @@ export function useAppShellSections(ctx: any) {
 
         const canActivateExistingThread =
           threadStatusById[resolvedThreadId] !== undefined ||
-          threads.some((entry) => entry.id === resolvedThreadId) ||
+          workspaceThreads.some((entry) => entry.id === resolvedThreadId) ||
           resolvedThreadId.startsWith("claude-pending-") ||
           resolvedThreadId.startsWith("opencode-pending-");
         if (canActivateExistingThread) {
@@ -1171,12 +1222,13 @@ export function useAppShellSections(ctx: any) {
       threadsByWorkspace,
       kanbanTasks,
       resolveCanonicalThreadId,
+      setSelectedKanbanTaskId,
     ]
   );
 
   const handleCloseTaskConversation = useCallback(() => {
     setSelectedKanbanTaskId(null);
-  }, []);
+  }, [setSelectedKanbanTaskId]);
 
   const handleKanbanCreateTask = useCallback(
     (input: Parameters<typeof kanbanCreateTask>[0]) => {
@@ -1274,7 +1326,7 @@ export function useAppShellSections(ctx: any) {
     if (appMode !== "kanban") {
       setSelectedKanbanTaskId(null);
     }
-  }, [appMode]);
+  }, [appMode, setSelectedKanbanTaskId]);
 
   // Sync activeWorkspaceId when kanban navigates to a workspace
   useEffect(() => {

@@ -13,7 +13,7 @@ vi.mock("react-i18next", () => ({
         "sidebar.addWorkspace": "Add workspace",
         "sidebar.toggleSearch": "Toggle search",
         "sidebar.searchProjects": "Search projects",
-        "sidebar.quickNewThread": "New Thread",
+        "sidebar.quickNewThread": "Home",
         "sidebar.quickAutomation": "Automation",
         "sidebar.quickAutomationBadge": "new task!",
         "sidebar.quickSearch": "Search",
@@ -166,7 +166,7 @@ describe("Sidebar", () => {
       expect(screen.getByText("Ctrl+K")).toBeTruthy();
       expect(screen.getByText("Ctrl+F")).toBeTruthy();
       expect(container.querySelectorAll(".sidebar-primary-nav .sidebar-primary-nav-shortcut")).toHaveLength(2);
-      expect(screen.getByRole("button", { name: "New Thread" }).getAttribute("title")).toContain("Ctrl+J");
+      expect(screen.getByRole("button", { name: "Home" }).getAttribute("title")).toContain("Ctrl+J");
       expect(screen.getByRole("button", { name: "Automation" }).getAttribute("title")).toContain("Ctrl+K");
       expect(screen.getByRole("button", { name: "Search" }).getAttribute("title")).toContain("Ctrl+F");
     } finally {
@@ -196,7 +196,7 @@ describe("Sidebar", () => {
     expect(dropdown).toBeTruthy();
     const menu = within(dropdown as HTMLElement);
 
-    expect(menu.queryByRole("menuitem", { name: "New Thread" })).toBeNull();
+    expect(menu.queryByRole("menuitem", { name: "Home" })).toBeNull();
     expect(menu.queryByRole("menuitem", { name: "Automation" })).toBeNull();
     const skillsEntry = menu.getByRole("menuitem", { name: "Skills" });
     expect((skillsEntry as HTMLButtonElement).disabled).toBe(true);
