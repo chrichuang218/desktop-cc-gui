@@ -146,6 +146,66 @@ const REWIND_ITEMS_WITH_USER_MENTION_FALLBACK: ConversationItem[] = [
   },
 ];
 
+const REWIND_ITEMS_WITH_BASH_COMMAND_CHANGES: ConversationItem[] = [
+  {
+    id: "user-bash-1",
+    kind: "message",
+    role: "user",
+    text: "@/Users/demo/repo/.specify目录结构说明.md 删除这个文件，@/Users/demo/repo/pom.xml 加两行注释，新增 abc.txt 内容 100",
+  },
+  {
+    id: "assistant-bash-1",
+    kind: "message",
+    role: "assistant",
+    text: "正在执行",
+  },
+  {
+    id: "tool-bash-delete",
+    kind: "tool",
+    toolType: "Bash",
+    title: "Bash",
+    detail: JSON.stringify({
+      command: "rm /Users/demo/repo/.specify目录结构说明.md",
+      description: "删除文件",
+    }),
+    status: "completed",
+    output: "(Bash completed with no output)",
+    changes: [],
+  },
+  {
+    id: "tool-bash-add",
+    kind: "tool",
+    toolType: "Bash",
+    title: "Bash",
+    detail: JSON.stringify({
+      command: "printf '100' > /Users/demo/repo/abc.txt",
+      description: "创建 abc.txt",
+    }),
+    status: "completed",
+    output: "(Bash completed with no output)",
+    changes: [],
+  },
+  {
+    id: "tool-bash-edit",
+    kind: "tool",
+    toolType: "fileChange",
+    title: "Edit file",
+    detail: JSON.stringify({
+      input: {
+        file_path: "/Users/demo/repo/pom.xml",
+      },
+    }),
+    status: "completed",
+    changes: [
+      {
+        path: "/Users/demo/repo/pom.xml",
+        kind: "modified",
+        diff: "@@ -1,1 +1,2 @@\n </properties>\n+<!-- 统一认证与规范驱动开发演示项目依赖 -->",
+      },
+    ],
+  },
+];
+
 type ComposerHarnessProps = {
   items?: ConversationItem[];
   onRewind?: (userMessageId: string) => void | Promise<void>;
@@ -281,6 +341,19 @@ describe("Composer Claude rewind confirmation", () => {
     expect(
       screen.getByTestId("claude-rewind-file-SPEC_KIT_实战指南.md").textContent,
     ).toContain("git.fileDeleted");
+  });
+
+  it("includes Bash command-created and command-deleted files in rewind preview", () => {
+    render(<ComposerHarness items={REWIND_ITEMS_WITH_BASH_COMMAND_CHANGES} />);
+
+    fireEvent.click(screen.getByTestId("rewind-trigger"));
+
+    expect(screen.getByTestId("claude-rewind-dialog")).not.toBeNull();
+    expect(
+      screen.getByTestId("claude-rewind-file-.specify目录结构说明.md"),
+    ).not.toBeNull();
+    expect(screen.getByTestId("claude-rewind-file-abc.txt")).not.toBeNull();
+    expect(screen.getByTestId("claude-rewind-file-pom.xml")).not.toBeNull();
   });
 
   it("exports rewind files into default chat diff directory", async () => {
