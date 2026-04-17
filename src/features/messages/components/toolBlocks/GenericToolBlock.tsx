@@ -174,6 +174,45 @@ function isExitPlanToolVariant(toolName: string, title: string): boolean {
   );
 }
 
+function looksLikeExitPlanPayload(
+  item: Extract<ConversationItem, { kind: 'tool' }>,
+  value?: string,
+): boolean {
+  if (item.toolType !== 'toolCall' || !/claude/i.test(item.title)) {
+    return false;
+  }
+  if (!value) {
+    return false;
+  }
+  const normalized = value.trim();
+  if (!normalized) {
+    return false;
+  }
+  const hasPlanSection = /(?:^|\n)PLAN\s*(?=\n|$)/i.test(normalized);
+  const hasAllowedPromptsSection = /(?:^|\n)ALLOWEDPROMPTS\s*(?=\n|$)/i.test(normalized);
+  if (hasPlanSection && hasAllowedPromptsSection) {
+    return true;
+  }
+  try {
+    const parsed = JSON.parse(normalized) as unknown;
+    if (!parsed || typeof parsed !== 'object') {
+      return false;
+    }
+    const record = parsed as Record<string, unknown>;
+    return (
+      typeof record.plan === 'string' &&
+      record.plan.trim().length > 0 &&
+      (
+        (typeof record.planFilePath === 'string' && record.planFilePath.trim().length > 0) ||
+        (Array.isArray(record.allowedPrompts) && record.allowedPrompts.length > 0) ||
+        (Array.isArray(record.ALLOWEDPROMPTS) && record.ALLOWEDPROMPTS.length > 0)
+      )
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
  * 根据工具名称获取 codicon 图标类名
  */
@@ -938,7 +977,10 @@ export const GenericToolBlock = memo(function GenericToolBlock({
   const hasChanges = (item.changes ?? []).length > 0;
   const status = getToolStatus(item, hasChanges);
   const summary = extractSummary(item, toolName);
-  const isExitPlanTool = isExitPlanToolVariant(toolName, item.title);
+  const isExitPlanTool =
+    isExitPlanToolVariant(toolName, item.title) ||
+    looksLikeExitPlanPayload(item, item.detail) ||
+    looksLikeExitPlanPayload(item, item.output);
   const exitPlanContent = useMemo(
     () => (isExitPlanTool ? extractExitPlanCardContent(item) : null),
     [isExitPlanTool, item],

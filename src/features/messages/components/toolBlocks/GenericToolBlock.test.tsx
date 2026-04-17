@@ -165,6 +165,27 @@ const exitPlanModeDecoratedClaudeVariantItem: Extract<ConversationItem, { kind: 
   status: "completed",
 };
 
+const exitPlanModePayloadOnlyFallbackItem: Extract<ConversationItem, { kind: "tool" }> = {
+  id: "tool-8d",
+  kind: "tool",
+  toolType: "toolCall",
+  title: "Claude / something-unexpected",
+  detail: `ALLOWEDPROMPTS
+[
+  {
+    "prompt": "run maven tests",
+    "tool": "Bash"
+  }
+]
+
+PLAN
+# springboot-demo 改进计划
+
+- step one
+- step two`,
+  status: "completed",
+};
+
 const exitPlanModeRichMarkdownItem: Extract<ConversationItem, { kind: "tool" }> = {
   id: "tool-9",
   kind: "tool",
@@ -547,6 +568,18 @@ describe("GenericToolBlock", () => {
     render(
       <GenericToolBlock
         item={exitPlanModeDecoratedClaudeVariantItem}
+        isExpanded={false}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Execution Plan Ready")).toBeTruthy();
+  });
+
+  it("falls back to exit plan card when payload clearly contains plan sections", () => {
+    render(
+      <GenericToolBlock
+        item={exitPlanModePayloadOnlyFallbackItem}
         isExpanded={false}
         onToggle={vi.fn()}
       />,

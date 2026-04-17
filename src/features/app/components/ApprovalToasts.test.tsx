@@ -115,4 +115,37 @@ describe("ApprovalToasts", () => {
 
     expect(screen.queryByRole("button", { name: "approval.approveTurnBatch" })).toBeNull();
   });
+
+  it("hides large file content fields from approval detail view", () => {
+    render(
+      <ApprovalToasts
+        approvals={[
+          {
+            workspace_id: "ws-1",
+            request_id: "req-1",
+            method: "item/fileChange/requestApproval",
+            params: {
+              toolName: "Write",
+              file_path: "/repo/.env.example",
+              content: "SECRET=demo",
+              new_string: "NEXT=demo",
+              message: "Approve to continue",
+            },
+          },
+        ]}
+        workspaces={[]}
+        onDecision={vi.fn()}
+        variant="inline"
+      />,
+    );
+
+    expect(screen.getByText("File path")).toBeTruthy();
+    expect(screen.getByText("/repo/.env.example")).toBeTruthy();
+    expect(screen.getByText("Tool")).toBeTruthy();
+    expect(screen.getByText("Write")).toBeTruthy();
+    expect(screen.queryByText("Content")).toBeNull();
+    expect(screen.queryByText("New string")).toBeNull();
+    expect(screen.queryByText("SECRET=demo")).toBeNull();
+    expect(screen.queryByText("NEXT=demo")).toBeNull();
+  });
 });

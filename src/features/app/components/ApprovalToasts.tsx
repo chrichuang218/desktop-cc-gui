@@ -25,6 +25,32 @@ const HIDDEN_APPROVAL_PARAM_KEYS = new Set([
   "message",
 ]);
 
+const HIDDEN_APPROVAL_BODY_KEYS = new Set([
+  "content",
+  "text",
+  "old_string",
+  "oldString",
+  "new_string",
+  "newString",
+  "diff",
+  "patch",
+  "unified_diff",
+  "unifiedDiff",
+]);
+
+function shouldHideApprovalParamEntry(key: string, value: unknown): boolean {
+  if (HIDDEN_APPROVAL_PARAM_KEYS.has(key)) {
+    return true;
+  }
+  if (HIDDEN_APPROVAL_BODY_KEYS.has(key)) {
+    return true;
+  }
+  if (typeof value === "string" && value.length > 500) {
+    return true;
+  }
+  return false;
+}
+
 function getToolLabel(method: string): string {
   if (method.includes("fileChange")) {
     return "File changes";
@@ -170,7 +196,7 @@ export function ApprovalToasts({
         const approvalMessage = getApprovalMessage(params);
         const approvalToolName = getApprovalToolName(params);
         const entries = Object.entries(params).filter(([key, value]) => {
-          if (HIDDEN_APPROVAL_PARAM_KEYS.has(key)) {
+          if (shouldHideApprovalParamEntry(key, value)) {
             return false;
           }
           if (approvalPath && value === approvalPath) {
