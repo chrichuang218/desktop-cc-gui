@@ -74,6 +74,9 @@ const PROJECT_MEMORY_BLOCK_REGEX = /^<project-memory>[\s\S]*?<\/project-memory>\
 const MODE_FALLBACK_PREFIX_REGEX =
   /^(?:collaboration mode:\s*code\.|execution policy \(default mode\):|execution policy \(plan mode\):)/i;
 const MODE_FALLBACK_MARKER_REGEX = /User request\s*:\s*/i;
+const AGENT_PROMPT_HEADER = "## Agent Role and Instructions";
+const AGENT_PROMPT_NAME_PREFIX_REGEX = /^Agent Name:\s*\S+/i;
+const AGENT_PROMPT_ICON_PREFIX_REGEX = /^Agent Icon:\s*\S+/i;
 const SHARED_SESSION_SYNC_PREFIX_REGEX =
   /^Shared session context sync\.\s*Continue from these recent turns before answering the new request:\s*/i;
 const SHARED_SESSION_CURRENT_REQUEST_MARKER_REGEX =
@@ -140,6 +143,27 @@ function stripModeFallbackBlock(text: string): string {
   return extracted.trim().length > 0 ? extracted : text;
 }
 
+function stripSelectedAgentPromptBlock(text: string): string {
+  const headerIndex = text.lastIndexOf(AGENT_PROMPT_HEADER);
+  if (headerIndex < 0) {
+    return text;
+  }
+  const prefix = text.slice(0, headerIndex);
+  const suffix = text
+    .slice(headerIndex + AGENT_PROMPT_HEADER.length)
+    .replace(/^\s+/, "");
+  if (!suffix) {
+    return text;
+  }
+  const looksInjectedAgentBlock =
+    AGENT_PROMPT_NAME_PREFIX_REGEX.test(suffix) ||
+    AGENT_PROMPT_ICON_PREFIX_REGEX.test(suffix);
+  if (!looksInjectedAgentBlock) {
+    return text;
+  }
+  return prefix.replace(/\s+$/, "");
+}
+
 function stripSharedSessionContextSyncWrapper(text: string): string {
   if (!SHARED_SESSION_SYNC_PREFIX_REGEX.test(text.trimStart())) {
     return text;
@@ -156,7 +180,9 @@ function stripSharedSessionContextSyncWrapper(text: string): string {
 function normalizeComparableUserText(text: string) {
   const latestUserInput = extractLatestUserInputTextPreserveFormatting(text);
   const normalized = stripSharedSessionContextSyncWrapper(
-    stripModeFallbackBlock(stripInjectedProjectMemoryBlock(latestUserInput)),
+    stripSelectedAgentPromptBlock(
+      stripModeFallbackBlock(stripInjectedProjectMemoryBlock(latestUserInput)),
+    ),
   );
   return normalized.replace(/\s+/g, " ").trim();
 }
@@ -483,6 +509,33 @@ function isPendingToolStatus(status: string) {
   );
 }
 
+function stableSerializeApprovalValue(value: unknown): string {
+  if (value === null || value === undefined) {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableSerializeApprovalValue(entry)).join(",")}]`;
+  }
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const keys = Object.keys(record).sort();
+    return `{${keys
+      .map((key) => `${JSON.stringify(key)}:${stableSerializeApprovalValue(record[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function isSameApprovalRequest(left: ApprovalRequest, right: ApprovalRequest) {
+  return (
+    left.workspace_id === right.workspace_id &&
+    left.request_id === right.request_id &&
+    left.method === right.method &&
+    stableSerializeApprovalValue(left.params ?? {}) ===
+      stableSerializeApprovalValue(right.params ?? {})
+  );
+}
+
 type ThreadActivityStatus = {
   isProcessing: boolean;
   hasUnread: boolean;
@@ -621,7 +674,12 @@ export type ThreadAction =
       cursor: string | null;
     }
   | { type: "addApproval"; approval: ApprovalRequest }
-  | { type: "removeApproval"; requestId: number | string; workspaceId: string }
+  | {
+      type: "removeApproval";
+      requestId: number | string;
+      workspaceId: string;
+      approval?: ApprovalRequest;
+    }
   | { type: "addUserInputRequest"; request: RequestUserInputRequest }
   | {
       type: "removeUserInputRequest";
@@ -2321,9 +2379,7 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
     }
     case "addApproval": {
       const exists = state.approvals.some(
-        (item) =>
-          item.request_id === action.approval.request_id &&
-          item.workspace_id === action.approval.workspace_id,
+        (item) => isSameApprovalRequest(item, action.approval),
       );
       if (exists) {
         return state;
@@ -2335,8 +2391,10 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
         ...state,
         approvals: state.approvals.filter(
           (item) =>
-            item.request_id !== action.requestId ||
-            item.workspace_id !== action.workspaceId,
+            action.approval
+              ? !isSameApprovalRequest(item, action.approval)
+              : item.request_id !== action.requestId ||
+                item.workspace_id !== action.workspaceId,
         ),
       };
     case "addUserInputRequest": {

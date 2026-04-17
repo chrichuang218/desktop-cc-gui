@@ -1189,9 +1189,13 @@ const enPart2 = {
     none: "None",
     noExtraDetails: "No extra details.",
     decline: "Decline",
+    approveTurnBatch: "Approve all in this batch ({{count}})",
     allowCommandsStartWith: "Allow commands that start with {{prefix}}",
     alwaysAllow: "Always allow",
     approveEnter: "Approve (Enter)",
+    remainingRequests: "{{count}} more approval request(s) waiting",
+    applyingApprovedFileChange: "Applying approved file change",
+    resumingAfterApproval: "Approved. Applying the change locally and resuming Claude...",
     userInputRequested: "User input requested",
     requestOf: "Request {{current}} of {{total}}",
     typeAnswerOptional: "Type your answer (optional)",
@@ -1693,6 +1697,29 @@ const enPart2 = {
       label: "Auto Mode",
       tooltip: "Bypass all permission checks",
       description: "Fully automated, bypassing all permission checks [Use with caution]",
+    },
+  },
+
+  claudeModes: {
+    default: {
+      label: "Suggest Mode (Preview)",
+      tooltip: "Claude Code preview approval mode. Some flows may still degrade while the full approval bridge is being completed.",
+      description: "Now available as a preview for validating Claude's default permission flow. If a degraded path is hit, the UI should guide users back to Plan mode.",
+    },
+    plan: {
+      label: "Plan Mode",
+      tooltip: "Claude Code read-only analysis mode.",
+      description: "Uses read-only tools for analysis and planning before taking action.",
+    },
+    acceptEdits: {
+      label: "Auto Edit",
+      tooltip: "Claude Code auto-edit mode. Not enabled in the current rollout phase.",
+      description: "This mode stays unavailable until Claude approval semantics are verified.",
+    },
+    bypassPermissions: {
+      label: "Full Auto",
+      tooltip: "Claude Code mode that skips permission checks.",
+      description: "Hands-off execution for file writes and commands without approvals. Use with care.",
     },
   },
 

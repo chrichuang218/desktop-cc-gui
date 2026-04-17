@@ -7,14 +7,109 @@ type ApprovalToastsProps = {
   approvals: ApprovalRequest[];
   workspaces: WorkspaceInfo[];
   onDecision: (request: ApprovalRequest, decision: "accept" | "decline") => void;
+  onApproveBatch?: (requests: ApprovalRequest[]) => void;
   onRemember?: (request: ApprovalRequest, command: string[]) => void;
+  variant?: "overlay" | "inline";
 };
+
+const HIDDEN_APPROVAL_PARAM_KEYS = new Set([
+  "threadId",
+  "thread_id",
+  "turnId",
+  "turn_id",
+  "toolName",
+  "tool_name",
+  "itemId",
+  "item_id",
+  "input",
+  "message",
+]);
+
+const HIDDEN_APPROVAL_BODY_KEYS = new Set([
+  "content",
+  "text",
+  "old_string",
+  "oldString",
+  "new_string",
+  "newString",
+  "diff",
+  "patch",
+  "unified_diff",
+  "unifiedDiff",
+]);
+
+function shouldHideApprovalParamEntry(key: string, value: unknown): boolean {
+  if (HIDDEN_APPROVAL_PARAM_KEYS.has(key)) {
+    return true;
+  }
+  if (HIDDEN_APPROVAL_BODY_KEYS.has(key)) {
+    return true;
+  }
+  if (typeof value === "string" && value.length > 500) {
+    return true;
+  }
+  return false;
+}
+
+function getToolLabel(method: string): string {
+  if (method.includes("fileChange")) {
+    return "File changes";
+  }
+  if (method.includes("commandExecution")) {
+    return "Command execution";
+  }
+  return "Approval";
+}
+
+function getApprovalPath(params: Record<string, unknown>): string | null {
+  for (const key of [
+    "file_path",
+    "filePath",
+    "filepath",
+    "path",
+    "target_file",
+    "targetFile",
+    "filename",
+    "file",
+    "notebook_path",
+    "notebookPath",
+  ]) {
+    const value = params[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
+function getApprovalMessage(params: Record<string, unknown>): string | null {
+  const raw = typeof params.message === "string" ? params.message.trim() : "";
+  if (!raw) {
+    return null;
+  }
+  if (raw.includes("acknowledges the blocked request")) {
+    return "Claude 需要你的授权才能继续这一步。当前预览阶段授权后可能仍需重试一次。";
+  }
+  return raw;
+}
+
+function getApprovalToolName(params: Record<string, unknown>): string | null {
+  for (const key of ["toolName", "tool_name"]) {
+    const value = params[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
+}
 
 export function ApprovalToasts({
   approvals,
   workspaces,
   onDecision,
+  onApproveBatch,
   onRemember,
+  variant = "overlay",
 }: ApprovalToastsProps) {
   const { t } = useTranslation();
   const workspaceLabels = useMemo(
@@ -23,6 +118,14 @@ export function ApprovalToasts({
   );
 
   const primaryRequest = approvals[approvals.length - 1];
+  const batchEligibleApprovals = useMemo(
+    () =>
+      primaryRequest?.method.includes("fileChange")
+        ? approvals.filter((approval) => approval.method.includes("fileChange"))
+        : [],
+    [approvals, primaryRequest],
+  );
+  const batchCount = batchEligibleApprovals.length;
 
   useEffect(() => {
     if (!primaryRequest) {
@@ -55,16 +158,13 @@ export function ApprovalToasts({
     return null;
   }
 
+  const remainingCount = Math.max(0, approvals.length - 1);
+
   const formatLabel = (value: string) =>
     value
       .replace(/([a-z])([A-Z])/g, "$1 $2")
       .replace(/_/g, " ")
       .trim();
-
-  const methodLabel = (method: string) => {
-    const trimmed = method.replace(/^codex\/requestApproval\/?/, "");
-    return trimmed || method;
-  };
 
   const renderParamValue = (value: unknown) => {
     if (value === null || value === undefined) {
@@ -83,26 +183,73 @@ export function ApprovalToasts({
   };
 
   return (
-    <div className="approval-toasts" role="region" aria-live="assertive">
-      {approvals.map((request) => {
+    <div
+      className={`approval-toasts${variant === "inline" ? " approval-toasts-inline" : ""}`}
+      role="region"
+      aria-live="assertive"
+    >
+      {[primaryRequest].map((request) => {
         const workspaceName = workspaceLabels.get(request.workspace_id);
         const params = request.params ?? {};
         const commandInfo = getApprovalCommandInfo(params);
-        const entries = Object.entries(params);
+        const approvalPath = getApprovalPath(params);
+        const approvalMessage = getApprovalMessage(params);
+        const approvalToolName = getApprovalToolName(params);
+        const entries = Object.entries(params).filter(([key, value]) => {
+          if (shouldHideApprovalParamEntry(key, value)) {
+            return false;
+          }
+          if (approvalPath && value === approvalPath) {
+            return false;
+          }
+          if (commandInfo && (key === "command" || key === "cmd")) {
+            return false;
+          }
+          return value !== undefined && value !== null && value !== "";
+        });
         return (
           <div
             key={`${request.workspace_id}-${request.request_id}`}
             className="approval-toast"
             role="alert"
           >
+            {remainingCount > 0 ? (
+              <div className="approval-toast-queue-summary">
+                {t("approval.remainingRequests", { count: remainingCount })}
+              </div>
+            ) : null}
             <div className="approval-toast-header">
               <div className="approval-toast-title">{t("approval.approvalNeeded")}</div>
               {workspaceName ? (
                 <div className="approval-toast-workspace">{workspaceName}</div>
               ) : null}
             </div>
-            <div className="approval-toast-method">{methodLabel(request.method)}</div>
+            <div className="approval-toast-method">{getToolLabel(request.method)}</div>
             <div className="approval-toast-details">
+              {approvalPath ? (
+                <div className="approval-toast-detail">
+                  <div className="approval-toast-detail-label">File path</div>
+                  <div className="approval-toast-detail-value">{approvalPath}</div>
+                </div>
+              ) : null}
+              {commandInfo ? (
+                <div className="approval-toast-detail">
+                  <div className="approval-toast-detail-label">Command</div>
+                  <div className="approval-toast-detail-value">{commandInfo.preview}</div>
+                </div>
+              ) : null}
+              {approvalToolName ? (
+                <div className="approval-toast-detail">
+                  <div className="approval-toast-detail-label">Tool</div>
+                  <div className="approval-toast-detail-value">{approvalToolName}</div>
+                </div>
+              ) : null}
+              {approvalMessage ? (
+                <div className="approval-toast-detail">
+                  <div className="approval-toast-detail-label">Note</div>
+                  <div className="approval-toast-detail-value">{approvalMessage}</div>
+                </div>
+              ) : null}
               {entries.length ? (
                 entries.map(([key, value]) => {
                   const rendered = renderParamValue(value);
@@ -123,11 +270,11 @@ export function ApprovalToasts({
                     </div>
                   );
                 })
-              ) : (
+              ) : !approvalPath && !commandInfo && !approvalMessage ? (
                 <div className="approval-toast-detail approval-toast-detail-empty">
                   {t("approval.noExtraDetails")}
                 </div>
-              )}
+              ) : null}
             </div>
             <div className="approval-toast-actions">
               <button
@@ -136,6 +283,14 @@ export function ApprovalToasts({
               >
                 {t("approval.decline")}
               </button>
+              {batchCount > 1 && onApproveBatch ? (
+                <button
+                  className="secondary"
+                  onClick={() => onApproveBatch(batchEligibleApprovals)}
+                >
+                  {t("approval.approveTurnBatch", { count: batchCount })}
+                </button>
+              ) : null}
               {commandInfo && onRemember ? (
                 <button
                   className="ghost approval-toast-remember"

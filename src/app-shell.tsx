@@ -426,12 +426,6 @@ export function AppShell() {
   const { errorToasts, dismissErrorToast } = useErrorToasts();
   const normalizePath = useCallback((path: string) => normalizeFsPath(path).trim(), []);
 
-  // Force accessMode to "full-access" (Auto Mode)
-  // Other modes are temporarily disabled in ModeSelect component
-  useEffect(() => {
-    setAccessMode("full-access");
-  }, []);
-
   const {
     gitIssues,
     gitIssuesTotal,
@@ -1112,6 +1106,7 @@ export function AppShell() {
     confirmCommit,
     updateCustomInstructions,
     confirmCustom,
+    handleApprovalBatchAccept,
     handleApprovalDecision,
     handleApprovalRemember,
     handleUserInputSubmit,
@@ -1284,7 +1279,10 @@ export function AppShell() {
   const listThreadsForWorkspaceTracked = useCallback(
     async (
       workspace: WorkspaceInfo,
-      options?: { preserveState?: boolean },
+      options?: {
+        preserveState?: boolean;
+        includeOpenCodeSessions?: boolean;
+      },
     ) => {
       await listThreadsForWorkspace(workspace, options);
       hydratedThreadListWorkspaceIdsRef.current.add(workspace.id);
@@ -2781,7 +2779,7 @@ export function AppShell() {
     gitPullRequests, gitPullRequestsError, gitPullRequestsLoading, gitPullRequestsTotal, gitRemoteUrl, gitRootCandidates, gitRootScanDepth, gitRootScanError,
     gitRootScanHasScanned, gitRootScanLoading, gitStatus, gitignoredDirectories, gitignoredFiles, globalSearchFilesByWorkspace, group, groupId,
     groupedWorkspaces, handleActivateFileTab, handleActiveDiffPath, handleAddAgent, handleAddCloneAgent, handleAddWorkspace, handleOpenNewWindow, handleAddWorkspaceFromPath, handleAddWorktreeAgent,
-    handleAppModeChange, handleApplyWorktreeChanges, handleApprovalDecision, handleApprovalRemember, handleArchiveActiveThread, handleCancelSwitchAccount, handleCheckoutBranch, handleCloseAllFileTabs,
+    handleAppModeChange, handleApplyWorktreeChanges, handleApprovalBatchAccept, handleApprovalDecision, handleApprovalRemember, handleArchiveActiveThread, handleCancelSwitchAccount, handleCheckoutBranch, handleCloseAllFileTabs,
     handleCloseFileTab, handleCollaborationModeResolved, handleCommit, handleCommitAndPush, handleCommitAndSync, handleCommitMessageChange, handleCopyDebug, handleCopyThread,
     handleCreateBranch, handleCreatePrompt, handleDebugClick, handleDeletePrompt, handleDeleteQueued, handleDeleteThreadPromptCancel, handleDeleteThreadPromptConfirm, handleDraftChange,
     handleDropWorkspacePaths, handleEditQueued, handleEnsureWorkspaceThreadsForSettings, handleExitEditor, handleGenerateCommitMessage, handleGitIssuesChange, handleGitPanelModeChange, handleGitPullRequestCommentsChange,

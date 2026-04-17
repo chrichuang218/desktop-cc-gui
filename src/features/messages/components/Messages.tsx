@@ -11,11 +11,13 @@ import Terminal from "lucide-react/dist/esm/icons/terminal";
 import { AgentIcon } from "../../../components/AgentIcon";
 import { ProxyStatusBadge } from "../../../components/ProxyStatusBadge";
 import type {
+  ApprovalRequest,
   ConversationItem,
   OpenAppTarget,
   RequestUserInputRequest,
   RequestUserInputResponse,
   TurnPlan,
+  WorkspaceInfo,
 } from "../../../types";
 import type {
   ConversationEngine,
@@ -42,6 +44,7 @@ import {
 } from "./toolBlocks";
 import { buildCommandSummary, extractToolName, isBashTool } from "./toolBlocks/toolConstants";
 import type { PresentationProfile } from "../presentation/presentationProfile";
+import { ApprovalToasts } from "../../app/components/ApprovalToasts";
 import { RequestUserInputMessage } from "../../app/components/RequestUserInputMessage";
 import { ImageLightbox, MessageImageGrid, type MessageImage } from "./MessageMediaBlocks";
 import {
@@ -86,10 +89,18 @@ type MessagesProps = {
   showMessageAnchors?: boolean;
   codeBlockCopyUseModifier?: boolean;
   userInputRequests?: RequestUserInputRequest[];
+  approvals?: ApprovalRequest[];
+  workspaces?: WorkspaceInfo[];
   onUserInputSubmit?: (
     request: RequestUserInputRequest,
     response: RequestUserInputResponse,
   ) => Promise<void> | void;
+  onApprovalDecision?: (
+    request: ApprovalRequest,
+    decision: "accept" | "decline",
+  ) => void;
+  onApprovalBatchAccept?: (requests: ApprovalRequest[]) => void;
+  onApprovalRemember?: (request: ApprovalRequest, command: string[]) => void;
   activeEngine?: "claude" | "codex" | "gemini" | "opencode";
   activeCollaborationModeId?: string | null;
   plan?: TurnPlan | null;
@@ -117,6 +128,7 @@ type WorkingIndicatorProps = {
   waitingForFirstChunk?: boolean;
   presentationProfile?: PresentationProfile | null;
   streamActivityPhase?: StreamActivityPhase;
+  primaryLabel?: string | null;
 };
 
 type MessageRowProps = {
@@ -799,6 +811,7 @@ const WorkingIndicator = memo(function WorkingIndicator({
   waitingForFirstChunk = false,
   presentationProfile = null,
   streamActivityPhase = "idle",
+  primaryLabel = null,
 }: WorkingIndicatorProps) {
   const { t } = useTranslation();
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -900,7 +913,9 @@ const WorkingIndicator = memo(function WorkingIndicator({
           <div className="working-timer">
             <span className="working-timer-clock">{formatDurationMs(elapsedMs)}</span>
           </div>
-          <span className="working-text">{reasoningLabel || t("messages.generatingResponse")}</span>
+          <span className="working-text">
+            {primaryLabel || reasoningLabel || t("messages.generatingResponse")}
+          </span>
           {showActivityLabel && <span className="working-activity">{activityLabel}</span>}
           {showNonStreamingHint && (
             <span className="working-hint">
@@ -1427,7 +1442,12 @@ export const Messages = memo(function Messages({
   showMessageAnchors = true,
   codeBlockCopyUseModifier = false,
   userInputRequests: legacyUserInputRequests = [],
+  approvals = [],
+  workspaces = [],
   onUserInputSubmit: legacyOnUserInputSubmit,
+  onApprovalDecision,
+  onApprovalBatchAccept,
+  onApprovalRemember,
   activeEngine: legacyActiveEngine = "claude",
   activeCollaborationModeId = null,
   plan: legacyPlan = null,
@@ -1749,6 +1769,27 @@ export const Messages = memo(function Messages({
       return next;
     });
   }, []);
+  useEffect(() => {
+    if (isThinking) {
+      return;
+    }
+    setExpandedItems((prev) => {
+      if (prev.size === 0) {
+        return prev;
+      }
+      const next = new Set(prev);
+      let changed = false;
+      for (const item of effectiveItems) {
+        if (item.kind !== "explore") {
+          continue;
+        }
+        if (next.delete(item.id)) {
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [effectiveItems, isThinking]);
 
   // Auto-expand the latest reasoning block during streaming (synced with idea-claude-code-gui)
   const lastAutoExpandedIdRef = useRef<string | null>(null);
@@ -1928,6 +1969,29 @@ export const Messages = memo(function Messages({
     }
     return null;
   }, [activeEngine, effectiveItems, presentationProfile]);
+  const approvalResumeWorkingLabel = useMemo(() => {
+    if (!isThinking || lastUserMessageIndex < 0) {
+      return null;
+    }
+    const resumeText = t("approval.resumingAfterApproval");
+    for (let index = effectiveItems.length - 1; index > lastUserMessageIndex; index -= 1) {
+      const item = effectiveItems[index];
+      if (!item) {
+        continue;
+      }
+      if (isAssistantMessageConversationItem(item)) {
+        break;
+      }
+      if (
+        item.kind === "tool" &&
+        item.toolType === "fileChange" &&
+        item.status === "running"
+      ) {
+        return item.output?.trim() || resumeText;
+      }
+    }
+    return null;
+  }, [effectiveItems, isThinking, lastUserMessageIndex, t]);
 
   const latestAssistantMessageId = useMemo(() => {
     for (let index = effectiveItems.length - 1; index > lastUserMessageIndex; index -= 1) {
@@ -1971,39 +2035,46 @@ export const Messages = memo(function Messages({
 
   const visibleItems = useMemo(() => {
     const filtered = effectiveItems.filter((item) => {
-        if (hideClaudeReasoning && item.kind === "reasoning") {
-          return false;
-        }
-        if (item.kind === "tool" && shouldHideToolItemForRender(item)) {
-          return false;
-        }
-        if (item.kind !== "reasoning") {
-          return true;
-        }
-        const parsed = reasoningMetaById.get(item.id);
-        const hasBody = parsed?.hasBody ?? false;
-        if (hasBody) {
-          return true;
-        }
-        if (!parsed?.workingLabel) {
-          return false;
-        }
-        // Gemini realtime segmented reasoning must stay visible as independent
-        // timeline slices instead of being reduced to only the latest title-only row.
-        if (activeEngine === "gemini" && isExplicitReasoningSegmentId(item.id)) {
-          return true;
-        }
-        if (activeEngine === "claude") {
-          return true;
-        }
-        // Keep title-only reasoning visible for Codex canvas and retain the
-        // latest title-only reasoning row for other engines to avoid the
-        // "thinking module disappears" regression in real-time conversations.
-        const keepTitleOnlyReasoning = presentationProfile
-          ? presentationProfile.showReasoningLiveDot
-          : activeEngine === "codex";
-        return keepTitleOnlyReasoning || item.id === latestTitleOnlyReasoningId;
-      });
+      if (
+        activeEngine === "codex" &&
+        item.kind === "explore" &&
+        item.status === "exploring"
+      ) {
+        return false;
+      }
+      if (hideClaudeReasoning && item.kind === "reasoning") {
+        return false;
+      }
+      if (item.kind === "tool" && shouldHideToolItemForRender(item)) {
+        return false;
+      }
+      if (item.kind !== "reasoning") {
+        return true;
+      }
+      const parsed = reasoningMetaById.get(item.id);
+      const hasBody = parsed?.hasBody ?? false;
+      if (hasBody) {
+        return true;
+      }
+      if (!parsed?.workingLabel) {
+        return false;
+      }
+      // Gemini realtime segmented reasoning must stay visible as independent
+      // timeline slices instead of being reduced to only the latest title-only row.
+      if (activeEngine === "gemini" && isExplicitReasoningSegmentId(item.id)) {
+        return true;
+      }
+      if (activeEngine === "claude") {
+        return true;
+      }
+      // Keep title-only reasoning visible for Codex canvas and retain the
+      // latest title-only reasoning row for other engines to avoid the
+      // "thinking module disappears" regression in real-time conversations.
+      const keepTitleOnlyReasoning = presentationProfile
+        ? presentationProfile.showReasoningLiveDot
+        : activeEngine === "codex";
+      return keepTitleOnlyReasoning || item.id === latestTitleOnlyReasoningId;
+    });
     const appendReasoningRuns = activeEngine === "claude" || activeEngine === "gemini";
     const deduped = dedupeAdjacentReasoningItems(
       filtered,
@@ -2201,6 +2272,28 @@ export const Messages = memo(function Messages({
     autoScrollRef.current = liveAutoFollowEnabled ? true : nearBottom;
     scheduleAnchorUpdate("scroll");
   }, [isNearBottom, liveAutoFollowEnabled, scheduleAnchorUpdate]);
+  const clearTransientUiState = useCallback(() => {
+    if (copyTimeoutRef.current) {
+      window.clearTimeout(copyTimeoutRef.current);
+      copyTimeoutRef.current = null;
+    }
+    if (anchorUpdateRafRef.current !== null) {
+      window.cancelAnimationFrame(anchorUpdateRafRef.current);
+      anchorUpdateRafRef.current = null;
+    }
+    if (planPanelFocusRafRef.current !== null) {
+      window.cancelAnimationFrame(planPanelFocusRafRef.current);
+      planPanelFocusRafRef.current = null;
+    }
+    if (planPanelFocusTimeoutRef.current !== null) {
+      window.clearTimeout(planPanelFocusTimeoutRef.current);
+      planPanelFocusTimeoutRef.current = null;
+    }
+    if (planPanelFocusNodeRef.current) {
+      planPanelFocusNodeRef.current.classList.remove("plan-panel-focus-ring");
+      planPanelFocusNodeRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     if (!isMessagesPerfDebugEnabled()) {
@@ -2260,27 +2353,7 @@ export const Messages = memo(function Messages({
     };
   });
 
-  useEffect(() => {
-    return () => {
-      if (copyTimeoutRef.current) {
-        window.clearTimeout(copyTimeoutRef.current);
-      }
-      if (anchorUpdateRafRef.current !== null) {
-        window.cancelAnimationFrame(anchorUpdateRafRef.current);
-        anchorUpdateRafRef.current = null;
-      }
-      if (planPanelFocusRafRef.current !== null) {
-        window.cancelAnimationFrame(planPanelFocusRafRef.current);
-      }
-      if (planPanelFocusTimeoutRef.current !== null) {
-        window.clearTimeout(planPanelFocusTimeoutRef.current);
-      }
-      if (planPanelFocusNodeRef.current) {
-        planPanelFocusNodeRef.current.classList.remove("plan-panel-focus-ring");
-        planPanelFocusNodeRef.current = null;
-      }
-    };
-  }, []);
+  useEffect(() => clearTransientUiState, [clearTransientUiState]);
 
   useEffect(() => {
     if (!hasAnchorRail) {
@@ -2441,6 +2514,30 @@ export const Messages = memo(function Messages({
   const shouldRenderUserInputNode =
     (activeEngine === "codex" || activeEngine === "claude") &&
     Boolean(legacyOnUserInputSubmit);
+  const visibleApprovals = useMemo(() => {
+    if (!approvals.length) {
+      return [];
+    }
+
+    return approvals.filter((approval) =>
+      !workspaceId || approval.workspace_id === workspaceId,
+    );
+  }, [approvals, workspaceId]);
+  const approvalNode =
+    visibleApprovals.length > 0 && onApprovalDecision
+      ? (
+        <div className="messages-inline-approval-slot">
+          <ApprovalToasts
+            approvals={visibleApprovals}
+            workspaces={workspaces}
+            onDecision={onApprovalDecision}
+            onApproveBatch={onApprovalBatchAccept}
+            onRemember={onApprovalRemember}
+            variant="inline"
+          />
+        </div>
+      )
+      : null;
   const userInputNode =
     shouldRenderUserInputNode && legacyOnUserInputSubmit
       ? (
@@ -2612,7 +2709,7 @@ export const Messages = memo(function Messages({
       );
     }
     if (item.kind === "explore") {
-      const isExpanded = expandedItems.has(item.id);
+      const isExpanded = isThinking || expandedItems.has(item.id);
       return (
         <ExploreRow
           key={`explore:${item.id}`}
@@ -2716,6 +2813,7 @@ export const Messages = memo(function Messages({
         onScroll={updateAutoScroll}
       >
         <div className="messages-full">
+          {approvalNode}
           {shouldCollapseHistoryItems && (
             <div
               className="messages-collapsed-indicator"
@@ -2755,6 +2853,7 @@ export const Messages = memo(function Messages({
             hasItems={effectiveItems.length > 0}
             reasoningLabel={latestReasoningLabel}
             activityLabel={latestWorkingActivityLabel}
+            primaryLabel={approvalResumeWorkingLabel}
             activeEngine={activeEngine}
             waitingForFirstChunk={waitingForFirstChunk}
             presentationProfile={presentationProfile}
