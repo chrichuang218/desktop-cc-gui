@@ -37,6 +37,8 @@ use crate::types::{LocalUsageSessionSummary, WorkspaceEntry};
 
 pub(crate) use self::session_runtime::ensure_codex_session;
 
+const DELETE_ARCHIVE_TIMEOUT_MS: u64 = 2_000;
+
 fn normalize_model_id(candidate: Option<String>) -> Option<String> {
     candidate
         .map(|value| value.trim().to_string())
@@ -1182,10 +1184,11 @@ pub(crate) async fn delete_codex_session(
         return Err("session_id is required".to_string());
     }
 
-    let archive_result = codex_core::archive_thread_core(
+    let archive_result = codex_core::archive_thread_best_effort_core(
         &state.sessions,
         workspace_id.clone(),
         normalized_session_id.clone(),
+        Duration::from_millis(DELETE_ARCHIVE_TIMEOUT_MS),
     )
     .await;
     if let Err(error) = &archive_result {
@@ -1220,6 +1223,99 @@ pub(crate) async fn delete_codex_session(
         "method": "filesystem",
         "archivedBeforeDelete": archive_result.is_ok(),
     }))
+}
+
+#[tauri::command]
+pub(crate) async fn delete_codex_sessions(
+    workspace_id: String,
+    session_ids: Vec<String>,
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<Value, String> {
+    if remote_backend::is_remote_mode(&*state).await {
+        return remote_backend::call_remote(
+            &*state,
+            app,
+            "delete_codex_sessions",
+            json!({ "workspaceId": workspace_id, "sessionIds": session_ids }),
+        )
+        .await;
+    }
+
+    let normalized_session_ids = session_ids
+        .into_iter()
+        .map(|session_id| session_id.trim().to_string())
+        .filter(|session_id| !session_id.is_empty())
+        .collect::<Vec<_>>();
+    if normalized_session_ids.is_empty() {
+        return Ok(json!({ "results": [] }));
+    }
+
+    for session_id in &normalized_session_ids {
+        if session_id.contains('/') || session_id.contains('\\') || session_id.contains("..") {
+            return Err("invalid session_id".to_string());
+        }
+    }
+
+    let mut archive_results = HashMap::new();
+    for session_id in &normalized_session_ids {
+        let archive_result = codex_core::archive_thread_best_effort_core(
+            &state.sessions,
+            workspace_id.clone(),
+            session_id.clone(),
+            Duration::from_millis(DELETE_ARCHIVE_TIMEOUT_MS),
+        )
+        .await;
+        if let Err(error) = &archive_result {
+            log::debug!(
+                "[delete_codex_sessions] Best-effort archive skipped for workspace {} session {}: {}",
+                workspace_id,
+                session_id,
+                error
+            );
+        }
+        archive_results.insert(session_id.clone(), archive_result.is_ok());
+    }
+
+    let delete_results = local_usage::delete_codex_sessions_for_workspace(
+        &state.workspaces,
+        &workspace_id,
+        &normalized_session_ids,
+    )
+    .await?;
+
+    let session = {
+        let sessions = state.sessions.lock().await;
+        sessions.get(&workspace_id).cloned()
+    };
+    if let Some(session) = session {
+        for result in &delete_results {
+            if result.deleted {
+                session
+                    .clear_thread_effective_mode(&result.session_id)
+                    .await;
+            }
+        }
+    }
+
+    let serialized_results = delete_results
+        .into_iter()
+        .map(|result| {
+            json!({
+                "sessionId": result.session_id,
+                "deleted": result.deleted,
+                "deletedCount": result.deleted_count,
+                "method": "filesystem",
+                "archivedBeforeDelete": archive_results
+                    .get(&result.session_id)
+                    .copied()
+                    .unwrap_or(false),
+                "error": result.error,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Ok(json!({ "results": serialized_results }))
 }
 
 #[tauri::command]

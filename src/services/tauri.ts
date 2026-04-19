@@ -2174,10 +2174,7 @@ export async function archiveThread(workspaceId: string, threadId: string) {
   });
 }
 
-export async function deleteCodexSession(
-  workspaceId: string,
-  sessionId: string,
-) {
+export async function deleteCodexSession(workspaceId: string, sessionId: string) {
   return invoke<{
     deleted: boolean;
     deletedCount: number;
@@ -2188,11 +2185,22 @@ export async function deleteCodexSession(
     sessionId,
   });
 }
-
-export async function deleteOpenCodeSession(
-  workspaceId: string,
-  sessionId: string,
-) {
+export async function deleteCodexSessions(workspaceId: string, sessionIds: string[]) {
+  return invoke<{
+    results: Array<{
+      sessionId: string;
+      deleted: boolean;
+      deletedCount: number;
+      method: "filesystem";
+      archivedBeforeDelete?: boolean;
+      error?: string | null;
+    }>;
+  }>("delete_codex_sessions", {
+    workspaceId,
+    sessionIds,
+  });
+}
+export async function deleteOpenCodeSession(workspaceId: string, sessionId: string) {
   return invoke<{ deleted: boolean; method: "cli" | "filesystem" }>(
     "opencode_delete_session",
     { workspaceId, sessionId },

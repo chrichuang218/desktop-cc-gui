@@ -102,6 +102,7 @@ pub(crate) fn invoke_handler(
         crate::codex::list_mcp_server_status,
         crate::codex::archive_thread,
         crate::codex::delete_codex_session,
+        crate::codex::delete_codex_sessions,
         crate::codex::collaboration_mode_list,
         crate::codex::model_list,
         crate::codex::account_rate_limits,
