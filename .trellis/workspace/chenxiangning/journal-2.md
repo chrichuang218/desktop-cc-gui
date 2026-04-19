@@ -181,3 +181,62 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 39: 修复 OpenApp 图标懒加载回归并收口启动期开销
+
+**Date**: 2026-04-20
+**Task**: 修复 OpenApp 图标懒加载回归并收口启动期开销
+**Branch**: `feature/vv0.4.4`
+
+### Summary
+
+(Add summary)
+
+### Main Changes
+
+任务目标：修复 macOS 冷启动期间 OpenApp 图标预取带来的开销问题，并完成当前工作区代码 review 中发现的问题收口。
+
+主要改动：
+- 将 OpenApp 图标解析收敛为菜单与设置页按需懒加载，避免顶层启动阶段 eager 触发未知应用图标探测。
+- 修复设置页 Open Apps 自定义应用图标回退为通用图标的问题。
+- 为 OpenAppMenu 补齐 i18n 文案与懒加载回归测试。
+- 收掉 app-shell 中空对象重建与一个 hooks warning。
+
+涉及模块：
+- src/features/app/components/OpenAppMenu.tsx
+- src/features/app/hooks/useOpenAppIcons.ts
+- src/features/settings/components/settings-view/sections/OpenAppsSection.tsx
+- src/app-shell.tsx
+- src/features/files/components/DetachedFileExplorerWindow.tsx
+- src/i18n/locales/en.part1.ts
+- src/i18n/locales/zh.part1.ts
+
+验证结果：
+- npm run typecheck 通过
+- npx vitest run src/features/app/components/OpenAppMenu.test.tsx 通过
+- npx eslint 指定变更文件通过
+- npm run check:large-files:near-threshold 通过（app-shell.tsx 仍处 near-threshold watchlist，但未超过 3000 行）
+
+后续事项：
+- 观察 macOS 冷启动场景下 launchservicesd / 功耗是否明显回落。
+- 当前工作区仍存在未跟踪的 openspec/changes/global-session-history-archive-center/，本次未纳入提交。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4d417500` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

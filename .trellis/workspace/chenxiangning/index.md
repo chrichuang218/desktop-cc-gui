@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 38
+- **Total Sessions**: 39
 - **Last Active**: 2026-04-20
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~183 | Active |
+| `journal-2.md` | ~242 | Active |
 | `journal-1.md` | ~1990 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 39 | 2026-04-20 | 修复 OpenApp 图标懒加载回归并收口启动期开销 | `4d417500` | `feature/vv0.4.4` |
 | 38 | 2026-04-20 | 归档项目会话管理范围修正提案 | `869e2562668d722ed4f4cbc4fe7d97fc4ae79c3b` | `feature/vv0.4.4` |
 | 37 | 2026-04-20 | 落地项目范围会话聚合与归属路由 | `accf1da0` | `feature/vv0.4.4` |
 | 36 | 2026-04-20 | Fix repeated empty session loading | `e15b2497` | `feature/vv0.4.4` |
