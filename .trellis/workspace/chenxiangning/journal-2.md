@@ -240,3 +240,62 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 40: 修正工作树新建会话入口交互
+
+**Date**: 2026-04-20
+**Task**: 修正工作树新建会话入口交互
+**Branch**: `feature/vv0.4.4`
+
+### Summary
+
+(Add summary)
+
+### Main Changes
+
+任务目标:
+- 修复 worktree 卡片缺失正确的新建会话入口的问题，让用户点击加号时看到引擎选择菜单，而不是直接创建默认 Claude Code 会话。
+
+主要改动:
+- 在 Sidebar menu hook 中抽取可复用的新建会话菜单组构建逻辑。
+- 新增 showWorkspaceSessionMenu，用于只弹出 session-only 菜单。
+- 将 worktree 卡片上的加号入口改为调用 session-only 菜单，而不再直接调用 onAddAgent 默认创建。
+- 为 worktree 加号按钮补充 stopPropagation，避免点击时误触发行折叠。
+- 调整 sidebar 浮层 aria-label，在 session-only 菜单场景下使用新建会话语义。
+- 补充 hook 与组件测试，覆盖 worktree 加号菜单分组和点击不折叠行为。
+
+涉及模块:
+- src/features/app/hooks/useSidebarMenus.ts
+- src/features/app/hooks/useSidebarMenus.test.tsx
+- src/features/app/components/Sidebar.tsx
+- src/features/app/components/WorktreeSection.tsx
+- src/features/app/components/WorktreeCard.tsx
+- src/features/app/components/WorktreeSection.test.tsx
+- src/styles/sidebar.css
+
+验证结果:
+- 已执行 npm exec vitest run src/features/app/components/WorktreeSection.test.tsx src/features/app/hooks/useSidebarMenus.test.tsx
+- 结果: 2 个测试文件通过，9 个测试通过。
+
+后续事项:
+- 工作区仍存在未提交的 session-management 与 rust 相关改动，本次未纳入提交，需与当前 sidebar 修复分开处理。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `05afc70020bfd35be708a8f92d14f44d972b7e3e` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
