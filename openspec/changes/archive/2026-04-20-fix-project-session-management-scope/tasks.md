@@ -24,4 +24,4 @@
 
 - [x] 5.1 [P0][Input: updated Rust session management and local usage tests][Output: passing targeted Rust regression suite][Verify: `cargo test --manifest-path src-tauri/Cargo.toml session_management local_usage`] 跑后端聚合范围、mixed-root、delete 路由测试。
 - [x] 5.2 [P0][Input: updated frontend hook/component tests][Output: passing session management frontend regressions][Verify: `npm run test -- SessionManagementSection useWorkspaceSessionCatalog`] 跑前端聚合视图与 mutation 分桶测试。
-- [ ] 5.3 [P1][Input: integrated app behavior][Output: manual proof that mossx main view covers main + worktrees and operations stay precise][Verify: main workspace project view sees full set and archive/delete only affect selected entries] 完成一次真实项目手测并记录结果。
+- [x] 5.3 [P1][Input: integrated app behavior][Output: manual proof that mossx main view covers main + worktrees and operations stay precise][Verify: main workspace project view sees full set and archive/delete only affect selected entries] 完成一次真实项目手测并记录结果。
