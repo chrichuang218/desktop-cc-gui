@@ -1,11 +1,13 @@
-import { useCallback, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Menu, MenuItem } from "@tauri-apps/api/menu";
 import { LogicalPosition } from "@tauri-apps/api/dpi";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import type { EngineType, WorkspaceInfo } from "../../../types";
+import { detectEngines, getOpenCodeProviderHealth } from "../../../services/tauri";
 import { formatByteSize } from "../../../utils/formatting";
+import type { EngineDisplayInfo } from "../../engine/hooks/useEngineController";
 
 export type WorkspaceMenuIconKind =
   | "engine-claude"
@@ -25,7 +27,11 @@ export type WorkspaceMenuAction = {
   tone?: "default" | "danger";
   deprecated?: boolean;
   unavailable?: boolean;
+  statusLabel?: string | null;
+  refreshable?: boolean;
+  refreshing?: boolean;
   onSelect: () => void;
+  onRefresh?: () => Promise<void> | void;
 };
 
 export type WorkspaceMenuGroup = {
@@ -39,10 +45,12 @@ export type WorkspaceMenuState = {
   y: number;
   workspaceId: string;
   groups: WorkspaceMenuGroup[];
+  workspace?: WorkspaceInfo;
 };
 
 type SidebarMenuHandlers = {
   onAddAgent: (workspace: WorkspaceInfo, engine?: EngineType) => void;
+  engineOptions?: EngineDisplayInfo[];
   onAddSharedAgent?: (workspace: WorkspaceInfo) => void;
   onDeleteThread: (workspaceId: string, threadId: string) => void;
   onSyncThread: (workspaceId: string, threadId: string) => void;
@@ -61,6 +69,7 @@ type SidebarMenuHandlers = {
 
 export function useSidebarMenus({
   onAddAgent,
+  engineOptions = [],
   onAddSharedAgent,
   onDeleteThread,
   onSyncThread,
@@ -79,9 +88,22 @@ export function useSidebarMenus({
   const { t } = useTranslation();
   const [workspaceMenuState, setWorkspaceMenuState] =
     useState<WorkspaceMenuState | null>(null);
+  const [workspaceOpenCodeLoginState, setWorkspaceOpenCodeLoginState] = useState<
+    Record<string, "loading" | "ready" | "requires-login">
+  >({});
+  const [workspaceEngineOverrides, setWorkspaceEngineOverrides] = useState<
+    Record<string, EngineDisplayInfo>
+  >({});
+  const [workspaceEngineRefreshing, setWorkspaceEngineRefreshing] = useState<
+    Record<string, boolean>
+  >({});
+  const workspaceOpenCodeLoginRequestIdRef = useRef<Record<string, number>>({});
+  const workspaceEngineRefreshRequestIdRef = useRef<Record<string, number>>({});
 
   const closeWorkspaceMenu = useCallback(() => {
     setWorkspaceMenuState(null);
+    setWorkspaceEngineOverrides({});
+    setWorkspaceEngineRefreshing({});
   }, []);
 
   const onWorkspaceMenuAction = useCallback(
@@ -93,6 +115,259 @@ export function useSidebarMenus({
       action.onSelect();
     },
     [closeWorkspaceMenu],
+  );
+
+  const canResolveWorkspaceOpenCodeLoginState = useCallback(
+    (workspace: WorkspaceInfo) => {
+      const openCodeInfo = engineOptions.find((entry) => entry.type === "opencode") ?? null;
+      return Boolean(
+        workspace.connected && openCodeInfo?.availabilityState === "ready",
+      );
+    },
+    [engineOptions],
+  );
+
+  const primeWorkspaceOpenCodeLoginState = useCallback(
+    async (
+      workspace: WorkspaceInfo,
+      options?: {
+        force?: boolean;
+      },
+    ) => {
+      const force = options?.force ?? false;
+      if (!canResolveWorkspaceOpenCodeLoginState(workspace)) {
+        return;
+      }
+      const previousState = workspaceOpenCodeLoginState[workspace.id];
+      if (!force && previousState) {
+        return;
+      }
+      const requestId =
+        (workspaceOpenCodeLoginRequestIdRef.current[workspace.id] ?? 0) + 1;
+      workspaceOpenCodeLoginRequestIdRef.current[workspace.id] = requestId;
+      setWorkspaceOpenCodeLoginState((prev) => ({
+        ...prev,
+        [workspace.id]: "loading",
+      }));
+      try {
+        const providerHealth = await getOpenCodeProviderHealth(workspace.id, null);
+        if (workspaceOpenCodeLoginRequestIdRef.current[workspace.id] !== requestId) {
+          return;
+        }
+        setWorkspaceOpenCodeLoginState((prev) => ({
+          ...prev,
+          [workspace.id]: providerHealth.connected ? "ready" : "requires-login",
+        }));
+      } catch {
+        if (workspaceOpenCodeLoginRequestIdRef.current[workspace.id] !== requestId) {
+          return;
+        }
+        setWorkspaceOpenCodeLoginState((prev) => {
+          const next = { ...prev };
+          if (previousState) {
+            next[workspace.id] = previousState;
+          } else {
+            delete next[workspace.id];
+          }
+          return next;
+        });
+      }
+    },
+    [
+      canResolveWorkspaceOpenCodeLoginState,
+      workspaceOpenCodeLoginState,
+    ],
+  );
+
+  const getWorkspaceEngineKey = useCallback(
+    (workspaceId: string, engineType: EngineType) => `${workspaceId}:${engineType}`,
+    [],
+  );
+
+  const refreshSingleEngineState = useCallback(
+    async (workspace: WorkspaceInfo, engineType: EngineType) => {
+      const workspaceEngineKey = getWorkspaceEngineKey(workspace.id, engineType);
+      const requestId =
+        (workspaceEngineRefreshRequestIdRef.current[workspaceEngineKey] ?? 0) + 1;
+      workspaceEngineRefreshRequestIdRef.current[workspaceEngineKey] = requestId;
+
+      const fallbackEngineInfo =
+        workspaceEngineOverrides[workspaceEngineKey] ??
+        engineOptions.find((entry) => entry.type === engineType) ??
+        null;
+
+      setWorkspaceEngineRefreshing((prev) => ({
+        ...prev,
+        [workspaceEngineKey]: true,
+      }));
+      setWorkspaceEngineOverrides((prev) => ({
+        ...prev,
+        [workspaceEngineKey]: {
+          type: engineType,
+          displayName: fallbackEngineInfo?.displayName ?? engineType,
+          shortName: fallbackEngineInfo?.shortName ?? engineType,
+          installed: false,
+          version: null,
+          error: null,
+          availabilityState: "loading",
+          availabilityLabelKey: "workspace.engineStatusLoading",
+        },
+      }));
+
+      try {
+        const detectedStatuses = await detectEngines();
+        if (workspaceEngineRefreshRequestIdRef.current[workspaceEngineKey] !== requestId) {
+          return;
+        }
+        const matchedStatus = detectedStatuses.find((entry) => entry.engineType === engineType) ?? null;
+        let nextEngineInfo: EngineDisplayInfo = {
+          type: engineType,
+          displayName: fallbackEngineInfo?.displayName ?? engineType,
+          shortName: fallbackEngineInfo?.shortName ?? engineType,
+          installed: matchedStatus?.installed ?? false,
+          version: matchedStatus?.installed ? (matchedStatus?.version ?? null) : null,
+          error: matchedStatus?.error ?? null,
+          availabilityState: matchedStatus?.installed ? "ready" : "unavailable",
+          availabilityLabelKey: matchedStatus?.installed ? null : "sidebar.cliNotInstalled",
+        };
+
+        if (engineType === "opencode") {
+          if (matchedStatus?.installed && workspace.connected) {
+            const providerHealth = await getOpenCodeProviderHealth(workspace.id, null);
+            if (workspaceEngineRefreshRequestIdRef.current[workspaceEngineKey] !== requestId) {
+              return;
+            }
+            setWorkspaceOpenCodeLoginState((prev) => ({
+              ...prev,
+              [workspace.id]: providerHealth.connected ? "ready" : "requires-login",
+            }));
+            if (!providerHealth.connected) {
+              nextEngineInfo = {
+                ...nextEngineInfo,
+                availabilityState: "requires-login",
+                availabilityLabelKey: "workspace.engineStatusRequiresLogin",
+              };
+            }
+          } else {
+            setWorkspaceOpenCodeLoginState((prev) => {
+              const next = { ...prev };
+              delete next[workspace.id];
+              return next;
+            });
+          }
+        }
+
+        setWorkspaceEngineOverrides((prev) => ({
+          ...prev,
+          [workspaceEngineKey]: nextEngineInfo,
+        }));
+      } catch {
+        if (workspaceEngineRefreshRequestIdRef.current[workspaceEngineKey] !== requestId) {
+          return;
+        }
+        setWorkspaceEngineOverrides((prev) => ({
+          ...prev,
+          [workspaceEngineKey]: {
+            type: engineType,
+            displayName: fallbackEngineInfo?.displayName ?? engineType,
+            shortName: fallbackEngineInfo?.shortName ?? engineType,
+            installed: false,
+            version: null,
+            error: null,
+            availabilityState: "unavailable",
+            availabilityLabelKey: "sidebar.cliNotInstalled",
+          },
+        }));
+      } finally {
+        if (workspaceEngineRefreshRequestIdRef.current[workspaceEngineKey] === requestId) {
+          setWorkspaceEngineRefreshing((prev) => ({
+            ...prev,
+            [workspaceEngineKey]: false,
+          }));
+        }
+      }
+    },
+    [engineOptions, getWorkspaceEngineKey, workspaceEngineOverrides],
+  );
+
+  const resolveEngineActionMeta = useCallback(
+    (workspace: WorkspaceInfo, engineType: EngineType) => {
+      const workspaceEngineKey = getWorkspaceEngineKey(workspace.id, engineType);
+      const engineInfo =
+        workspaceEngineOverrides[workspaceEngineKey] ??
+        engineOptions.find((entry) => entry.type === engineType) ??
+        null;
+      const refreshing = workspaceEngineRefreshing[workspaceEngineKey] === true;
+      const commonMeta = {
+        refreshable: true,
+        refreshing,
+        onRefresh: () => refreshSingleEngineState(workspace, engineType),
+      };
+      if (!engineInfo) {
+        return {
+          unavailable: true,
+          statusLabel: t("sidebar.cliNotInstalled"),
+          ...commonMeta,
+        };
+      }
+
+      if (engineInfo.availabilityState === "loading") {
+        return {
+          unavailable: true,
+          statusLabel: t("workspace.engineStatusLoading"),
+          ...commonMeta,
+        };
+      }
+
+      if (engineInfo.availabilityState === "requires-login") {
+        return {
+          unavailable: true,
+          statusLabel: t("workspace.engineStatusRequiresLogin"),
+          ...commonMeta,
+        };
+      }
+
+      if (engineInfo.availabilityState === "unavailable") {
+        return {
+          unavailable: true,
+          statusLabel: t("sidebar.cliNotInstalled"),
+          ...commonMeta,
+        };
+      }
+
+      if (engineType === "opencode" && workspace.connected) {
+        const workspaceScopedState = workspaceOpenCodeLoginState[workspace.id];
+        if (workspaceScopedState === "loading") {
+          return {
+            unavailable: true,
+            statusLabel: t("workspace.engineStatusLoading"),
+            ...commonMeta,
+          };
+        }
+        if (workspaceScopedState === "requires-login") {
+          return {
+            unavailable: true,
+            statusLabel: t("workspace.engineStatusRequiresLogin"),
+            ...commonMeta,
+          };
+        }
+      }
+
+      return {
+        unavailable: false,
+        statusLabel: null,
+        ...commonMeta,
+      };
+    },
+    [
+      engineOptions,
+      getWorkspaceEngineKey,
+      refreshSingleEngineState,
+      t,
+      workspaceEngineOverrides,
+      workspaceEngineRefreshing,
+      workspaceOpenCodeLoginState,
+    ],
   );
 
   const buildSessionMenuGroup = useCallback(
@@ -111,30 +386,84 @@ export function useSidebarMenus({
           id: "new-session-claude",
           label: t("workspace.engineClaudeCode"),
           iconKind: "engine-claude",
+          ...resolveEngineActionMeta(workspace, "claude"),
           onSelect: () => onAddAgent(workspace, "claude"),
         },
         {
           id: "new-session-codex",
           label: t("workspace.engineCodex"),
           iconKind: "engine-codex",
+          ...resolveEngineActionMeta(workspace, "codex"),
           onSelect: () => onAddAgent(workspace, "codex"),
         },
         {
           id: "new-session-opencode",
           label: t("workspace.engineOpenCode"),
           iconKind: "engine-opencode",
+          ...resolveEngineActionMeta(workspace, "opencode"),
           onSelect: () => onAddAgent(workspace, "opencode"),
         },
         {
           id: "new-session-gemini",
           label: t("workspace.engineGemini"),
           iconKind: "engine-gemini",
+          ...resolveEngineActionMeta(workspace, "gemini"),
           onSelect: () => onAddAgent(workspace, "gemini"),
         },
       ],
     }),
-    [t, onAddAgent, onAddSharedAgent],
+    [t, onAddAgent, onAddSharedAgent, resolveEngineActionMeta],
   );
+
+  useEffect(() => {
+    if (!workspaceMenuState?.workspace) {
+      return;
+    }
+    if (
+      canResolveWorkspaceOpenCodeLoginState(workspaceMenuState.workspace) &&
+      !workspaceOpenCodeLoginState[workspaceMenuState.workspace.id]
+    ) {
+      void primeWorkspaceOpenCodeLoginState(workspaceMenuState.workspace);
+    }
+    setWorkspaceMenuState((prev) => {
+      if (!prev?.workspace) {
+        return prev;
+      }
+      const sessionGroup = buildSessionMenuGroup(prev.workspace);
+      const nextGroups = prev.groups.map((group) =>
+        group.id === "new-session" ? sessionGroup : group
+      );
+      const prevSignature = JSON.stringify(
+        prev.groups.find((group) => group.id === "new-session")?.actions.map((action) => ({
+          id: action.id,
+          unavailable: action.unavailable,
+          statusLabel: action.statusLabel ?? null,
+          refreshing: action.refreshing ?? false,
+        })) ?? [],
+      );
+      const nextSignature = JSON.stringify(
+        sessionGroup.actions.map((action) => ({
+          id: action.id,
+          unavailable: action.unavailable,
+          statusLabel: action.statusLabel ?? null,
+          refreshing: action.refreshing ?? false,
+        })),
+      );
+      if (prevSignature === nextSignature) {
+        return prev;
+      }
+      return {
+        ...prev,
+        groups: nextGroups,
+      };
+    });
+  }, [
+    buildSessionMenuGroup,
+    canResolveWorkspaceOpenCodeLoginState,
+    primeWorkspaceOpenCodeLoginState,
+    workspaceMenuState?.workspace,
+    workspaceOpenCodeLoginState,
+  ]);
 
   const resolveWorkspaceMenuPosition = useCallback((event: MouseEvent) => {
     const menuWidthEstimate = 328;
@@ -256,6 +585,7 @@ export function useSidebarMenus({
     (event: MouseEvent, workspace: WorkspaceInfo) => {
       event.preventDefault();
       event.stopPropagation();
+      void primeWorkspaceOpenCodeLoginState(workspace, { force: true });
       const workspaceId = workspace.id;
       const { x, y } = resolveWorkspaceMenuPosition(event);
 
@@ -300,11 +630,13 @@ export function useSidebarMenus({
         y,
         workspaceId,
         groups,
+        workspace,
       });
     },
     [
       t,
       buildSessionMenuGroup,
+      primeWorkspaceOpenCodeLoginState,
       resolveWorkspaceMenuPosition,
       onReloadWorkspaceThreads,
       onDeleteWorkspace,
@@ -317,6 +649,7 @@ export function useSidebarMenus({
     (event: MouseEvent, workspace: WorkspaceInfo) => {
       event.preventDefault();
       event.stopPropagation();
+      void primeWorkspaceOpenCodeLoginState(workspace, { force: true });
       const { x, y } = resolveWorkspaceMenuPosition(event);
 
       setWorkspaceMenuState({
@@ -324,9 +657,10 @@ export function useSidebarMenus({
         y,
         workspaceId: workspace.id,
         groups: [buildSessionMenuGroup(workspace)],
+        workspace,
       });
     },
-    [buildSessionMenuGroup, resolveWorkspaceMenuPosition],
+    [buildSessionMenuGroup, primeWorkspaceOpenCodeLoginState, resolveWorkspaceMenuPosition],
   );
 
   const showWorktreeMenu = useCallback(

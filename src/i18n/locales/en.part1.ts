@@ -4,6 +4,7 @@ const enPart1 = {
     loading: "Loading…",
     saving: "Saving…",
     creating: "Creating…",
+    deleting: "Deleting…",
     save: "Save",
     create: "Create",
     cancel: "Cancel",
@@ -2320,6 +2321,9 @@ const enPart1 = {
     networkError: "Network error. Please check your connection.",
     failedToAddWorkspace: "Failed to add workspace.",
     failedToOpenNewWindow: "Failed to open a new window.",
+    failedToCreateSession: "Failed to create session.",
+    failedToCreateSessionNoThreadId:
+      "The runtime did not return a new session id.",
     cliNotFound: "Neither Claude Code CLI nor Codex CLI was found. Please install one of them.",
     cliNotFoundHint: "Install Claude Code: npm install -g @anthropic-ai/claude-code\nInstall Codex: npm install -g @openai/codex",
     codexCliNotFound: "Codex CLI not found. Install Codex and ensure `codex` is on your PATH.",
