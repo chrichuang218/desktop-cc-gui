@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConversationItem } from "../../../types";
+import type { ConversationState } from "../../threads/contracts/conversationCurtainContracts";
 import { Messages } from "./Messages";
 
 describe("Messages live behavior", () => {
@@ -487,6 +488,256 @@ describe("Messages live behavior", () => {
       expect(scrollSpy.mock.calls.length).toBeGreaterThan(baselineCalls);
     });
     scrollSpy.mockRestore();
+  });
+
+  it("pins only the latest ordinary user question during realtime processing", () => {
+    const items: ConversationItem[] = [
+      {
+        id: "user-live-sticky-old",
+        kind: "message",
+        role: "user",
+        text: "第一个问题",
+      },
+      {
+        id: "assistant-live-sticky-old",
+        kind: "message",
+        role: "assistant",
+        text: "第一轮答案",
+      },
+      {
+        id: "user-live-sticky-latest",
+        kind: "message",
+        role: "user",
+        text: "当前实时问题",
+      },
+      {
+        id: "reasoning-live-sticky",
+        kind: "reasoning",
+        summary: "分析中",
+        content: "",
+      },
+    ];
+
+    const { container } = render(
+      <Messages
+        items={items}
+        threadId="thread-1"
+        workspaceId="ws-1"
+        isThinking
+        processingStartedAt={Date.now() - 1_000}
+        openTargets={[]}
+        selectedOpenAppId=""
+      />,
+    );
+
+    const stickyNodes = container.querySelectorAll(".messages-live-sticky-user-message");
+    expect(stickyNodes).toHaveLength(1);
+    expect(stickyNodes[0]?.getAttribute("data-message-anchor-id")).toBe(
+      "user-live-sticky-latest",
+    );
+    expect(
+      container
+        .querySelector('[data-message-anchor-id="user-live-sticky-old"]')
+        ?.classList.contains("messages-live-sticky-user-message"),
+    ).toBe(false);
+  });
+
+  it("keeps the latest sticky user question rendered when realtime windowing trims the list", () => {
+    const overflowingRealtimeItems: ConversationItem[] = [
+      {
+        id: "user-live-sticky-windowed",
+        kind: "message",
+        role: "user",
+        text: "这个问题必须常驻",
+      },
+      ...Array.from({ length: 35 }, (_, index): ConversationItem => ({
+        id: `assistant-live-sticky-windowed-${index}`,
+        kind: "message",
+        role: "assistant",
+        text: `实时响应片段 ${index + 1}`,
+      })),
+    ];
+
+    const { container } = render(
+      <Messages
+        items={overflowingRealtimeItems}
+        threadId="thread-1"
+        workspaceId="ws-1"
+        isThinking
+        processingStartedAt={Date.now() - 1_000}
+        openTargets={[]}
+        selectedOpenAppId=""
+      />,
+    );
+
+    const stickyNode = container.querySelector(".messages-live-sticky-user-message");
+    expect(stickyNode?.getAttribute("data-message-anchor-id")).toBe(
+      "user-live-sticky-windowed",
+    );
+    expect(container.textContent ?? "").toContain("这个问题必须常驻");
+  });
+
+  it("does not keep a phantom collapsed-history indicator when the sticky question is the only trimmed item", () => {
+    const items: ConversationItem[] = [
+      {
+        id: "user-live-sticky-only-hidden",
+        kind: "message",
+        role: "user",
+        text: "唯一被裁掉的问题",
+      },
+      ...Array.from({ length: 30 }, (_, index): ConversationItem => ({
+        id: `assistant-live-sticky-only-hidden-${index}`,
+        kind: "message",
+        role: "assistant",
+        text: `实时响应片段 ${index + 1}`,
+      })),
+    ];
+
+    const { container } = render(
+      <Messages
+        items={items}
+        threadId="thread-1"
+        workspaceId="ws-1"
+        isThinking
+        processingStartedAt={Date.now() - 1_000}
+        openTargets={[]}
+        selectedOpenAppId=""
+      />,
+    );
+
+    expect(container.querySelector(".messages-live-sticky-user-message")).toBeTruthy();
+    expect(container.querySelector(".messages-collapsed-indicator")).toBeNull();
+  });
+
+  it("restores normal user bubble scrolling when realtime processing ends", () => {
+    const items: ConversationItem[] = [
+      {
+        id: "user-live-sticky-recover",
+        kind: "message",
+        role: "user",
+        text: "当前实时问题",
+      },
+      {
+        id: "reasoning-live-sticky-recover",
+        kind: "reasoning",
+        summary: "分析中",
+        content: "",
+      },
+    ];
+
+    const { container, rerender } = render(
+      <Messages
+        items={items}
+        threadId="thread-1"
+        workspaceId="ws-1"
+        isThinking
+        processingStartedAt={Date.now() - 1_000}
+        openTargets={[]}
+        selectedOpenAppId=""
+      />,
+    );
+
+    expect(container.querySelector(".messages-live-sticky-user-message")).toBeTruthy();
+
+    rerender(
+      <Messages
+        items={items}
+        threadId="thread-1"
+        workspaceId="ws-1"
+        isThinking={false}
+        openTargets={[]}
+        selectedOpenAppId=""
+      />,
+    );
+
+    expect(container.querySelector(".messages-live-sticky-user-message")).toBeNull();
+  });
+
+  it("does not pin restored history user bubbles", () => {
+    const restoredItems: ConversationItem[] = [
+      {
+        id: "user-history-sticky-disabled",
+        kind: "message",
+        role: "user",
+        text: "历史问题",
+      },
+      {
+        id: "assistant-history-sticky-disabled",
+        kind: "message",
+        role: "assistant",
+        text: "历史答案",
+      },
+    ];
+    const conversationState: ConversationState = {
+      items: restoredItems,
+      plan: null,
+      userInputQueue: [],
+      meta: {
+        workspaceId: "ws-1",
+        threadId: "thread-1",
+        engine: "codex",
+        activeTurnId: null,
+        isThinking: true,
+        heartbeatPulse: null,
+        historyRestoredAtMs: Date.now(),
+      },
+    };
+
+    const { container } = render(
+      <Messages
+        items={[]}
+        threadId="thread-1"
+        workspaceId="ws-1"
+        isThinking
+        conversationState={conversationState}
+        openTargets={[]}
+        selectedOpenAppId=""
+      />,
+    );
+
+    expect(container.querySelector(".messages-live-sticky-user-message")).toBeNull();
+  });
+
+  it("does not pin memory-only injected user payloads as the latest live question", () => {
+    const items: ConversationItem[] = [
+      {
+        id: "user-live-real-question",
+        kind: "message",
+        role: "user",
+        text: "真正的问题在这里",
+      },
+      {
+        id: "user-live-memory-only",
+        kind: "message",
+        role: "user",
+        text: "<project-memory>\n[项目上下文] 已记录会话摘要\n</project-memory>\n",
+      },
+      {
+        id: "reasoning-live-after-memory-only",
+        kind: "reasoning",
+        summary: "分析中",
+        content: "",
+      },
+    ];
+
+    const { container } = render(
+      <Messages
+        items={items}
+        threadId="thread-1"
+        workspaceId="ws-1"
+        isThinking
+        processingStartedAt={Date.now() - 1_000}
+        openTargets={[]}
+        selectedOpenAppId=""
+      />,
+    );
+
+    expect(container.querySelector(".messages-live-sticky-user-message")).toBeTruthy();
+    expect(
+      container
+        .querySelector(".messages-live-sticky-user-message")
+        ?.getAttribute("data-message-anchor-id"),
+    ).toBe("user-live-real-question");
   });
 
   it("collapses live middle steps when enabled", () => {
