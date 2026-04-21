@@ -254,3 +254,67 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 73: 修复历史吸顶长气泡重叠问题
+
+**Date**: 2026-04-21
+**Task**: 修复历史吸顶长气泡重叠问题
+**Branch**: `feature/f-v0.4.6`
+
+### Summary
+
+(Add summary)
+
+### Main Changes
+
+任务目标:
+- 修复历史会话浏览时，长用户气泡与 references 卡片在顶部 sticky 阶段发生重叠的问题。
+- 保持 realtime 最新问题吸顶 contract 不变，只修正 history 浏览模式。
+
+主要改动:
+- 将 history sticky 从“多条完整 user wrapper 同时 sticky”重构为“单一 condensed history sticky header”。
+- 在 Messages.tsx 中新增基于 scrollTop/offsetTop 的 active history header 计算与同步调度，移除逐条 history sticky wrapper class。
+- 在 messagesLiveWindow.ts 导出 ordinary user sticky 文本解析，统一 realtime/history 资格判定与 header 文本来源。
+- 在 messages.css 中新增独立的 history sticky header 样式，避免长 prompt 与 references 富内容直接占用吸顶区域。
+- 在 Messages.live-behavior.test.tsx 中补充 scroll handoff、restored history、pseudo-user exclusion、no-early-switch 等回归。
+- 同步更新 OpenSpec design/spec，明确 history 模式 pin 的是 condensed sticky header，而不是完整 user bubble。
+
+涉及模块:
+- src/features/messages/components/Messages.tsx
+- src/features/messages/components/messagesLiveWindow.ts
+- src/styles/messages.css
+- src/features/messages/components/Messages.live-behavior.test.tsx
+- openspec/changes/pin-history-user-question-bubble/design.md
+- openspec/changes/pin-history-user-question-bubble/specs/conversation-history-user-bubble-pinning/spec.md
+
+验证结果:
+- pnpm vitest run src/features/messages/components/Messages.live-behavior.test.tsx 通过（27 tests）
+- npm run typecheck 通过
+- npm run lint 通过（仅仓库既有 warnings，无新增 errors）
+- npm run check:large-files 通过
+- openspec validate pin-history-user-question-bubble --type change --strict --no-interactive 通过
+- git diff --check 通过
+
+后续事项:
+- 建议在真实历史会话里手工滚动验证 2 类场景：超长用户消息、带 references 的多轮问答切换。
+- 若体验稳定，可继续考虑归档 pin-history-user-question-bubble change。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e73ebbd5` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
