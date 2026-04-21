@@ -662,3 +662,69 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 80: 简化 unified_exec 官方配置入口
+
+**Date**: 2026-04-21
+**Task**: 简化 unified_exec 官方配置入口
+**Branch**: `feature/f-v0.4.6`
+
+### Summary
+
+(Add summary)
+
+### Main Changes
+
+任务目标:
+- 收口 Codex 后台终端设置，移除 unified_exec selector，改为只通过官方配置按钮控制 true / false / 跟随官方默认。
+- 修复刷新提示让“无已连接会话”看起来像错误的问题。
+- 将本次实现同步回 OpenSpec 主 specs 与 Trellis contract。
+
+主要改动:
+- 前端 `VendorSettingsPanel` 只保留三个 official config actions，并统一按钮样式与提示文案。
+- `SettingsView` 的 Codex runtime reload 在 restartedSessions=0 时改为中性提示，不再拼接 applied/failed 前缀误导用户。
+- `useAppSettings` 与 Rust `AppSettings::normalize_unified_exec_policy()` 统一把 legacy/local unified_exec policy 归一化为 `inherit`。
+- 更新 `zh.part1.ts`、`en.part1.ts`、`vitest.setup.ts` 与相关 Vitest。
+- 回写 `openspec/specs/codex-unified-exec-override-governance/spec.md`、`openspec/specs/codex-external-config-runtime-reload/spec.md`，并同步更新 delta specs 与 `.trellis/spec/guides/codex-unified-exec-override-contract.md`。
+
+涉及模块:
+- `src/features/vendors/components/VendorSettingsPanel.tsx`
+- `src/features/settings/components/SettingsView.tsx`
+- `src/features/settings/hooks/useAppSettings.ts`
+- `src-tauri/src/types.rs`
+- `src-tauri/src/shared/settings_core.rs`
+- `openspec/specs/codex-unified-exec-override-governance/spec.md`
+- `openspec/specs/codex-external-config-runtime-reload/spec.md`
+
+验证结果:
+- `cargo test --manifest-path src-tauri/Cargo.toml settings_core -- --nocapture` 通过。
+- `pnpm vitest run src/features/vendors/components/VendorSettingsPanel.test.tsx src/features/settings/components/SettingsView.test.tsx src/features/settings/hooks/useAppSettings.test.ts src/services/tauri.test.ts` 通过。
+- `npm run check:runtime-contracts` 通过。
+- `npm run check:large-files` 通过。
+- `npm run lint` 通过（仓库存在既有 `react-hooks/exhaustive-deps` warnings，无新增 error）。
+- `npm run typecheck` 通过。
+- `npm run test` 通过（仓库存在既有 act/warn 与测试日志输出，无失败）。
+- `openspec validate add-unified-exec-official-config-actions` 通过。
+
+后续事项:
+- 如果后面要彻底清理 `codexUnifiedExecPolicy` / `experimentalUnifiedExecEnabled` 的兼容字段，可以再开一个纯 contract 清理提案，避免和当前产品简化混在同一提交里。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1b7162fb` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

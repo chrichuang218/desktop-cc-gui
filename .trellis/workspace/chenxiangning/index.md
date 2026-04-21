@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-3.md`
-- **Total Sessions**: 79
+- **Total Sessions**: 80
 - **Last Active**: 2026-04-21
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-3.md` | ~664 | Active |
+| `journal-3.md` | ~730 | Active |
 | `journal-2.md` | ~1960 | Archived |
 | `journal-1.md` | ~1990 | Archived |
 <!-- @@@/auto:active-documents -->
@@ -31,6 +31,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 80 | 2026-04-21 | 简化 unified_exec 官方配置入口 | `1b7162fb` | `feature/f-v0.4.6` |
 | 79 | 2026-04-21 | 补充 Codex 启动配置与 unified_exec OpenSpec 提案 | `57b9f214e06c96bfb513e870b79ed8d3744ed32e` | `feature/f-v0.4.6` |
 | 78 | 2026-04-21 | 拆分消息历史吸顶样式文件 | `47b015d311e07a512360785494e6d56c52ba2c00` | `feature/f-v0.4.6` |
 | 77 | 2026-04-21 | 统一 Codex unified_exec 策略与官方配置治理 | `c1ad7eb83538ed3162add3e3ac17ed946802955b` | `feature/f-v0.4.6` |
